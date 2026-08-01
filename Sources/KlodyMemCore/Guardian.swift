@@ -21,6 +21,8 @@ public final class Guardian {
 
     private var streak: (tier: RiskTier, count: Int) = (.ok, 0)
     private var actedTier: RiskTier = .ok
+    /// Clé « cible|action » : le cooldown d'un `suspend` ne doit pas bloquer
+    /// l'escalade vers un `quit`, qui est une action différente et plus grave.
     private var lastActionAt: [String: Date] = [:]
     private var suspendedKeys: Set<String> = []
     private var lastNotifiedTier: RiskTier = .ok
@@ -99,6 +101,35 @@ public final class Guardian {
         }
     }
 
+    // MARK: - Décision
+
+    /// Ce que la politique commande à un niveau donné. Pure et sans effet de
+    /// bord, pour être testable — c'est le chemin le plus dangereux du code.
+    ///
+    /// L'échelle est **exclusive** : au niveau critique on quitte, on ne
+    /// suspend pas d'abord. Faire les deux dans le même tour gèlerait la cible
+    /// avant de lui demander de s'arrêter, et la demande serait perdue.
+    static func plannedActions(
+        tier: RiskTier,
+        groups: [AppGroup],
+        config: Config,
+        suspendedKeys: Set<String>
+    ) -> [(group: AppGroup, kind: ActionKind)] {
+        let targets = groups.filter { config.isManageable($0) }
+
+        if tier == .critical, config.actions.quitAtCritical {
+            // Y compris les cibles déjà gelées : suspendre n'a rendu aucune
+            // mémoire, seulement laissé le pager la récupérer.
+            return targets.map { (group: $0, kind: ActionKind.quit) }
+        }
+        if tier >= .high, config.actions.suspendAtHigh {
+            return targets
+                .filter { !$0.suspended && !suspendedKeys.contains($0.key) }
+                .map { (group: $0, kind: ActionKind.suspend) }
+        }
+        return []
+    }
+
     // MARK: - Machine à états
 
     private func updateStreak(_ tier: RiskTier) {
@@ -128,26 +159,22 @@ public final class Guardian {
         }
 
         var performed: [String] = []
-        let targets = groups.filter { config.isManageable($0) && !$0.suspended }
 
-        if tier >= .high, config.actions.suspendAtHigh {
-            for group in targets where allowedNow(group.key) {
-                let result = actuator.perform(.suspend, on: group)
-                if result.succeeded {
-                    suspendedKeys.insert(group.key)
-                    lastActionAt[group.key] = Date()
-                    performed.append("suspend:\(group.name)")
-                }
+        for (group, kind) in Guardian.plannedActions(
+            tier: tier, groups: groups, config: config, suspendedKeys: suspendedKeys
+        ) where allowedNow(group.key, kind) {
+            // Un process gelé n'exécute plus rien : il ne traitera jamais une
+            // demande d'arrêt. Le réveiller d'abord, sinon `quit` reste sans
+            // effet et la mémoire n'est jamais rendue.
+            if kind == .quit, group.suspended || suspendedKeys.contains(group.key) {
+                _ = actuator.perform(.resume, on: group)
+                suspendedKeys.remove(group.key)
             }
-        }
-        if tier == .critical, config.actions.quitAtCritical {
-            for group in targets where allowedNow(group.key) {
-                let result = actuator.perform(.quit, on: group)
-                if result.succeeded {
-                    lastActionAt[group.key] = Date()
-                    performed.append("quit:\(group.name)")
-                }
-            }
+            let result = actuator.perform(kind, on: group)
+            guard result.succeeded else { continue }
+            if kind == .suspend { suspendedKeys.insert(group.key) }
+            markActed(group.key, kind)
+            performed.append("\(kind.rawValue):\(group.name)")
         }
 
         lastAction = performed.isEmpty ? nil : performed.joined(separator: " ")
@@ -188,9 +215,13 @@ public final class Guardian {
         }
     }
 
-    private func allowedNow(_ key: String) -> Bool {
-        guard let last = lastActionAt[key] else { return true }
+    private func allowedNow(_ key: String, _ kind: ActionKind) -> Bool {
+        guard let last = lastActionAt["\(key)|\(kind.rawValue)"] else { return true }
         return Date().timeIntervalSince(last) >= config.actions.cooldownSeconds
+    }
+
+    private func markActed(_ key: String, _ kind: ActionKind) {
+        lastActionAt["\(key)|\(kind.rawValue)"] = Date()
     }
 
     private func publish(_ sample: MemorySample, _ assessment: RiskAssessment, _ groups: [AppGroup]) {

@@ -116,7 +116,23 @@ confirmation avant tout arrêt.
 
 Trois protections contre l'emballement : `confirmSamples` échantillons
 consécutifs avant d'agir, escalade uniquement à la montée, et `cooldownSeconds`
-entre deux actions sur la même cible.
+entre deux actions **de même nature** sur la même cible — le cooldown d'un
+`suspend` ne doit pas bloquer l'escalade vers un `quit`.
+
+### L'échelle est exclusive
+
+| Niveau | Action, si la cible est dans `manageable` |
+|---|---|
+| `sain`, `surveillance` | aucune |
+| `élevé` | `SIGSTOP` si `suspendAtHigh` |
+| `critique` | arrêt propre si `quitAtCritical`, **sinon** `SIGSTOP` |
+| retour à `sain` | `SIGCONT` de tout ce qui a été gelé, si `autoResume` |
+
+Au niveau critique on quitte, on ne suspend pas d'abord : geler une cible puis
+lui demander de s'arrêter perdrait la demande, un process arrêté n'exécutant
+plus rien. Pour la même raison, une cible gelée au niveau précédent reçoit
+`SIGCONT` avant l'arrêt — et elle reste une candidate, puisque la suspendre
+n'avait rendu aucune mémoire.
 
 ## Configuration
 

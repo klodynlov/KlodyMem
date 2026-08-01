@@ -465,3 +465,96 @@ final class NotifierTests: XCTestCase {
         XCTAssertEqual(Notifier.escape("c:\\chemin"), "\"c:\\\\chemin\"")
     }
 }
+
+
+// MARK: - Échelle d'escalade
+
+final class EscalationTests: XCTestCase {
+    private func armed(quit: Bool) -> Config {
+        var c = Config()
+        c.manageable = ["Google Chrome"]
+        c.actions.suspendAtHigh = true
+        c.actions.quitAtCritical = quit
+        return c
+    }
+
+    private var chrome: AppGroup {
+        makeGroup(name: "Google Chrome", bundle: "/Applications/Google Chrome.app",
+                  bytes: 4 * GiB, pids: [40000, 40001])
+    }
+
+    private var untouchable: AppGroup {
+        makeGroup(name: "Xcode", bundle: "/Applications/Xcode.app",
+                  bytes: 8 * GiB, pids: [40002])
+    }
+
+    func testNothingHappensBelowHigh() {
+        for tier in [RiskTier.ok, .watch] {
+            let plan = Guardian.plannedActions(
+                tier: tier, groups: [chrome], config: armed(quit: true), suspendedKeys: []
+            )
+            XCTAssertTrue(plan.isEmpty, "aucune action attendue au niveau \(tier)")
+        }
+    }
+
+    func testHighSuspendsOnlyManageable() {
+        let plan = Guardian.plannedActions(
+            tier: .high, groups: [chrome, untouchable],
+            config: armed(quit: true), suspendedKeys: []
+        )
+        XCTAssertEqual(plan.count, 1)
+        XCTAssertEqual(plan[0].group.name, "Google Chrome")
+        XCTAssertEqual(plan[0].kind, .suspend)
+    }
+
+    /// Régression : les deux blocs se déclenchaient dans le même tour au niveau
+    /// critique. La cible était gelée puis on lui demandait de quitter — un
+    /// process gelé ne traite jamais cette demande, et la mémoire n'était
+    /// jamais rendue.
+    func testCriticalQuitsInsteadOfSuspending() {
+        let plan = Guardian.plannedActions(
+            tier: .critical, groups: [chrome], config: armed(quit: true), suspendedKeys: []
+        )
+        XCTAssertEqual(plan.map(\.kind), [.quit])
+        XCTAssertFalse(plan.contains { $0.kind == .suspend })
+    }
+
+    /// Régression : une cible déjà suspendue au niveau « élevé » était exclue
+    /// du filtre et n'était donc jamais quittée quand ça empirait. Or suspendre
+    /// n'a rendu aucune mémoire.
+    func testCriticalStillQuitsAnAlreadySuspendedTarget() {
+        let frozen = makeGroup(name: "Google Chrome", bundle: "/Applications/Google Chrome.app",
+                               bytes: 4 * GiB, pids: [40000], suspended: true)
+        let plan = Guardian.plannedActions(
+            tier: .critical, groups: [frozen], config: armed(quit: true),
+            suspendedKeys: [frozen.key]
+        )
+        XCTAssertEqual(plan.map(\.kind), [.quit])
+    }
+
+    func testCriticalFallsBackToSuspendWhenQuitDisabled() {
+        let plan = Guardian.plannedActions(
+            tier: .critical, groups: [chrome], config: armed(quit: false), suspendedKeys: []
+        )
+        XCTAssertEqual(plan.map(\.kind), [.suspend])
+    }
+
+    func testAlreadySuspendedIsNotSuspendedTwice() {
+        let plan = Guardian.plannedActions(
+            tier: .high, groups: [chrome], config: armed(quit: true),
+            suspendedKeys: [chrome.key]
+        )
+        XCTAssertTrue(plan.isEmpty)
+    }
+
+    func testDisarmedPolicyNeverActs() {
+        var c = Config()
+        c.manageable = ["Google Chrome"] // liste blanche seule : n'arme rien
+        for tier in RiskTier.allCases {
+            XCTAssertTrue(
+                Guardian.plannedActions(tier: tier, groups: [chrome], config: c,
+                                        suspendedKeys: []).isEmpty
+            )
+        }
+    }
+}
