@@ -42,12 +42,28 @@ Quatre niveaux : `sain` → `surveillance` → `élevé` → `critique`.
 
 ```sh
 swift build -c release
-./deploy/install.sh          # binaire + agent launchd utilisateur, sans sudo
-./deploy/make-bar-app.sh     # optionnel : KlodyMem.app pour la barre de menus
+./deploy/make-bar-app.sh     # optionnel : bundle de la barre de menus
+./deploy/install.sh          # binaire + agents launchd utilisateur, sans sudo
 ```
 
-Retrait complet — `./deploy/uninstall.sh` (envoie aussi `SIGCONT` à tout ce qui
-aurait été suspendu).
+L'ordre compte : `install.sh` n'installe la barre de menus que si le bundle
+existe déjà.
+
+Deux agents utilisateur sont posés, aucun privilège root :
+
+| Agent | Rôle |
+|---|---|
+| `com.klody.mem` | le garde, en arrière-plan |
+| `com.klody.mem.bar` | la barre de menus, `KlodyMem.app` dans `~/Applications` |
+
+Les deux démarrent à l'ouverture de session. La barre est limitée à
+`LimitLoadToSessionType: Aqua` — inutile en SSH — et n'est relancée que sur
+plantage (`KeepAlive.SuccessfulExit: false`), pour que « Quitter KlodyMem »
+dans le menu quitte réellement. Elles apparaissent dans Réglages Système →
+Général → Ouverture, section « Autoriser en arrière-plan ».
+
+Retrait complet — `./deploy/uninstall.sh` (retire les deux agents, l'app, et
+envoie `SIGCONT` à tout ce qui aurait été suspendu).
 
 ## Commandes
 
@@ -143,9 +159,9 @@ façon, et les viser nommément renvoie « protégé », pas « introuvable ».
 `--yes` la contourne ; hors terminal, l'action est refusée plutôt que
 supposée. Un `suspend` mal ciblé gèle un IDE — constaté en test.
 
-**Ne jamais écraser le binaire installé avec `cp`.** Cela invalide sa signature
-ad-hoc et macOS tue le process au lancement, code 137, sans message.
-`install.sh` retire puis resigne ; `doctor` vérifie la signature.
+**Ne jamais écraser le binaire ni le bundle installés avec `cp`.** Cela
+invalide leur signature ad-hoc et macOS tue le process au lancement, code 137,
+sans message. `install.sh` retire puis resigne ; `doctor` vérifie la signature.
 
 **Les interpréteurs sont nommés par leur script.** Quatre `Python` à 36, 23, 12
 et 4 Gio sont indiscernables ; `mlx_server_guarded.py`, `acestep_service.py`

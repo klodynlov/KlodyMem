@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.klody.mem.bar</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__APP__/Contents/MacOS/KlodyMem</string>
+  </array>
+
+  <key>RunAtLoad</key><true/>
+
+  <!-- Session graphique uniquement : un NSStatusItem n'a aucun sens en SSH. -->
+  <key>LimitLoadToSessionType</key><string>Aqua</string>
+
+  <!-- Relancer sur plantage, PAS sur sortie propre : sinon « Quitter KlodyMem »
+       dans le menu serait annulé dans la seconde. -->
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key><false/>
+  </dict>
+
+  <key>ProcessType</key><string>Interactive</string>
+
+  <key>StandardOutPath</key><string>__STATE__/bar.log</string>
+  <key>StandardErrorPath</key><string>__STATE__/bar.err.log</string>
+</dict>
+</plist>

@@ -10,6 +10,10 @@ STATE="$HOME/.local/state/klodymem"
 CFG="$HOME/.config/klodymem/config.json"
 LABEL="com.klody.mem"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+BAR_LABEL="com.klody.mem.bar"
+BAR_PLIST="$HOME/Library/LaunchAgents/$BAR_LABEL.plist"
+BAR_SRC="$ROOT/KlodyMem.app"
+BAR_DST="$HOME/Applications/KlodyMem.app"
 
 [ -x "$BIN_SRC" ] || {
     echo "compiler d'abord :  swift build --package-path $ROOT -c release"
@@ -40,6 +44,29 @@ sed -e "s|__BIN__|$BIN_DST|g" -e "s|__STATE__|$STATE|g" \
 # process mais ne relit pas le fichier : une modification passerait inaperçue.
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
+
+# La barre de menus est optionnelle : elle n'est installée que si le bundle a
+# été construit (./deploy/make-bar-app.sh).
+if [ -d "$BAR_SRC" ]; then
+    echo "==> barre  -> $BAR_DST"
+    mkdir -p "$HOME/Applications"
+    # Même piège que pour le binaire : écraser un bundle signé invalide sa
+    # signature et macOS tue l'app au lancement.
+    rm -rf "$BAR_DST"
+    cp -R "$BAR_SRC" "$BAR_DST"
+    codesign -f -s - --deep "$BAR_DST" >/dev/null 2>&1 || true
+
+    echo "==> session-> $BAR_PLIST"
+    sed -e "s|__APP__|$BAR_DST|g" -e "s|__STATE__|$STATE|g" \
+        "$ROOT/deploy/com.klody.mem.bar.plist" > "$BAR_PLIST"
+
+    # Fermer l'instance lancée à la main, sinon deux icônes dans la barre.
+    pkill -f "KlodyMem.app/Contents/MacOS/KlodyMem" 2>/dev/null || true
+    launchctl bootout "gui/$(id -u)/$BAR_LABEL" 2>/dev/null || true
+    launchctl bootstrap "gui/$(id -u)" "$BAR_PLIST"
+else
+    echo "==> barre  -> non construite, ignorée (./deploy/make-bar-app.sh)"
+fi
 
 echo
 echo "installé. Vérifier :"
