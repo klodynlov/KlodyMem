@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.klody.mem</string>
+
+  <!-- Agent utilisateur : aucun privilège root. Le garde n'agit que sur les
+       process de cet utilisateur, c'est exactement le périmètre voulu. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>__BIN__</string>
+    <string>guard</string>
+  </array>
+
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ProcessType</key><string>Background</string>
+
+  <!-- Priorité basse : un garde-fou mémoire ne doit jamais concurrencer ce
+       qu'il surveille. -->
+  <key>Nice</key><integer>5</integer>
+  <key>LowPriorityIO</key><true/>
+
+  <key>StandardOutPath</key><string>__STATE__/guard.log</string>
+  <key>StandardErrorPath</key><string>__STATE__/guard.err.log</string>
+</dict>
+</plist>
