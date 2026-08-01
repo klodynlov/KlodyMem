@@ -86,13 +86,27 @@ public struct Config: Codable, Sendable, Equatable {
 
     // MARK: - Persistance
 
+    /// Chemins redirigeables par variable d'environnement.
+    ///
+    /// Indispensable pour éprouver une politique sans toucher à celle qui
+    /// tourne : sans ça, tester le scénario critique imposerait d'éditer la
+    /// config de production, et le garde réel appliquerait la politique de
+    /// test aux vraies applications.
     public static var configURL: URL {
-        FileManager.default.homeDirectoryForCurrentUser
+        if let override = ProcessInfo.processInfo.environment["KLODYMEM_CONFIG"],
+           !override.isEmpty {
+            return URL(fileURLWithPath: (override as NSString).expandingTildeInPath)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".config/klodymem/config.json")
     }
 
     public static var stateDirectory: URL {
-        FileManager.default.homeDirectoryForCurrentUser
+        if let override = ProcessInfo.processInfo.environment["KLODYMEM_STATE"],
+           !override.isEmpty {
+            return URL(fileURLWithPath: (override as NSString).expandingTildeInPath)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".local/state/klodymem")
     }
 

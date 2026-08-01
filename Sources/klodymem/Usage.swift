@@ -28,6 +28,8 @@ func printUsage() {
         --json                       sortie machine
         --dry-run, -n                décide et affiche, n'envoie aucun signal
         --yes, -y                    pas de confirmation sur une cible hors `manageable`
+        --config PATH                config isolée (aussi KLODYMEM_CONFIG)
+        --state PATH                 état isolé  (aussi KLODYMEM_STATE)
 
       Config   \(Config.configURL.path)
       État     \(Config.stateDirectory.path)

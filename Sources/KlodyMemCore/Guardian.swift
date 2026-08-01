@@ -178,6 +178,9 @@ public final class Guardian {
         }
 
         lastAction = performed.isEmpty ? nil : performed.joined(separator: " ")
+        log("niveau \(tier.frenchLabel) — \(assessment.summary)")
+        for entry in performed { log("  → \(entry)\(dryRun ? "  (simulation)" : "")") }
+        if performed.isEmpty, tier >= .high { log("  → aucune cible applicable") }
         history.append(HistoryEntry(
             sample: sample,
             assessment: assessment,
@@ -189,6 +192,9 @@ public final class Guardian {
     private func deescalate(groups: [AppGroup], sample: MemorySample, assessment: RiskAssessment) {
         actedTier = .ok
         lastNotifiedTier = .ok
+        // Tracer la sortie avant tout retour anticipé : sans ça l'opérateur
+        // voit l'escalade dans guard.log et jamais le retour à la normale.
+        log("retour au niveau sain")
         guard config.actions.autoResume, !suspendedKeys.isEmpty else {
             history.append(HistoryEntry(
                 sample: sample, assessment: assessment, topOffenders: [], action: "recovered"
@@ -203,6 +209,7 @@ public final class Guardian {
         }
         suspendedKeys.removeAll()
         lastAction = resumed.isEmpty ? nil : "resume:" + resumed.joined(separator: ",")
+        if !resumed.isEmpty { log("  → reprise de " + resumed.joined(separator: ", ")) }
         history.append(HistoryEntry(
             sample: sample, assessment: assessment, topOffenders: [],
             action: lastAction ?? "recovered"
@@ -213,6 +220,14 @@ public final class Guardian {
                 body: "Reprise de " + resumed.joined(separator: ", ")
             )
         }
+    }
+
+    /// Trace horodatée sur stdout — c'est ce que launchd capte dans
+    /// `guard.log`, et ce qui rend `guard --dry-run` observable.
+    private func log(_ message: String) {
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        print("[\(stamp)] \(message)")
+        fflush(stdout)
     }
 
     private func allowedNow(_ key: String, _ kind: ActionKind) -> Bool {

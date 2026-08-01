@@ -98,6 +98,32 @@ klodymem reserve 40G             # l'exécuter
 Escalade du moins destructif au plus destructif, en remesurant la marge réelle
 après chaque étape et en s'arrêtant dès que la cible est atteinte.
 
+## Éprouver une politique sans risque
+
+`--config` et `--state` redirigent les deux chemins (ou les variables
+`KLODYMEM_CONFIG` / `KLODYMEM_STATE`). Combinés à `--dry-run`, ils permettent
+de vérifier ce que la politique ferait sur les **vraies** applications, sans
+toucher ni à la config de production ni à l'agent qui tourne.
+
+```sh
+klodymem guard --dry-run --config /tmp/essai.json --state /tmp/essai-state
+```
+
+Pour atteindre un niveau donné sur une machine saine, resserrer les seuils
+plutôt que saturer la mémoire — par exemple `criticalHeadroomBytes` très
+au-dessus de la marge réelle force le niveau `critique`. Le garde relisant sa
+config à chaud, réécrire le fichier pendant qu'il tourne enchaîne les niveaux
+et déroule la séquence complète :
+
+```
+[…] niveau élevé — marge 51.3 Gio
+[…]   → suspend:Google Chrome  (simulation)
+[…] niveau critique — marge 51.0 Gio
+[…]   → quit:Google Chrome  (simulation)
+[…] retour au niveau sain
+[…]   → reprise de Google Chrome
+```
+
 ## Modèle de sûreté
 
 Le défaut est **notification seule**. Rien n'est jamais suspendu ni quitté tant

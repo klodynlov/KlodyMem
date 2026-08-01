@@ -38,6 +38,10 @@ func emitJSON<T: Encodable>(_ value: T) {
     print()
 }
 
+// Doivent être posés avant le premier accès à `Config.configURL`.
+if let path = takeOption("--config") { setenv("KLODYMEM_CONFIG", path, 1) }
+if let path = takeOption("--state") { setenv("KLODYMEM_STATE", path, 1) }
+
 let asJSON = takeFlag("--json")
 let dryRun = takeFlag("--dry-run", "-n")
 let assumeYes = takeFlag("--yes", "-y")
