@@ -122,6 +122,10 @@ entre deux actions sur la même cible.
 
 `~/.config/klodymem/config.json` — `klodymem config init` écrit les défauts.
 
+Le garde relit le fichier dès qu'il change, sans redémarrage : la ligne
+« config rechargée » apparaît dans `guard.log`. Une config cassée ne fait pas
+retomber sur les défauts — l'ancienne reste active et l'incident est journalisé.
+
 ```jsonc
 {
   "pollSeconds": 5,

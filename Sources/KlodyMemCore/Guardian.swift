@@ -11,12 +11,13 @@ import Foundation
 ///  - **cooldown** : une cible touchée n'est pas retouchée avant
 ///    `cooldownSeconds`.
 public final class Guardian {
-    private let config: Config
+    private var config: Config
     private let sampler: MemorySampler
-    private let notifier: Notifier
+    private var notifier: Notifier
     private let history: HistoryLog
-    private let actuator: Actuator
+    private var actuator: Actuator
     private let dryRun: Bool
+    private var configStamp: Date?
 
     private var streak: (tier: RiskTier, count: Int) = (.ok, 0)
     private var actedTier: RiskTier = .ok
@@ -35,11 +36,44 @@ public final class Guardian {
         self.notifier = Notifier(enabled: config.actions.notify)
         self.history = HistoryLog()
         self.actuator = Actuator(config: config, dryRun: dryRun)
+        self.configStamp = Guardian.configModified()
+    }
+
+    /// Relit la config quand son fichier change.
+    ///
+    /// Sans ça, éditer `config.json` ne produit rien tant que l'agent n'a pas
+    /// été redémarré — et rien ne le signale. Le seuil de confirmation est
+    /// remis à zéro : la nouvelle politique ne doit pas hériter d'une série
+    /// d'échantillons décidée sous l'ancienne.
+    private func reloadConfigIfChanged() {
+        let stamp = Guardian.configModified()
+        guard stamp != configStamp else { return }
+        configStamp = stamp
+        guard let fresh = try? Config.load() else {
+            // Config cassée : on garde la précédente plutôt que de retomber
+            // silencieusement sur des défauts que l'utilisateur n'a pas voulus.
+            print("config illisible, l'ancienne reste active")
+            fflush(stdout)
+            return
+        }
+        config = fresh
+        notifier = Notifier(enabled: fresh.actions.notify)
+        actuator = Actuator(config: fresh, dryRun: dryRun)
+        streak = (streak.tier, 0)
+        print("config rechargée — manageable: "
+            + (fresh.manageable.isEmpty ? "(vide)" : fresh.manageable.joined(separator: ", ")))
+        fflush(stdout)
+    }
+
+    private static func configModified() -> Date? {
+        try? FileManager.default
+            .attributesOfItem(atPath: Config.configURL.path)[.modificationDate] as? Date
     }
 
     /// Un tour de boucle. Séparé de `run()` pour rester testable.
     @discardableResult
     public func tick() -> (MemorySample, RiskAssessment, [AppGroup]) {
+        reloadConfigIfChanged()
         let sample = sampler.sample()
         let assessment = RiskModel.assess(sample, thresholds: config.thresholds)
         let groups = ProcessInventory.currentGroups()
