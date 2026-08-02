@@ -200,6 +200,10 @@ n'avait rendu aucune mémoire.
 ## Configuration
 
 `~/.config/klodymem/config.json` — `klodymem config init` écrit les défauts.
+[deploy/config.sample.json](deploy/config.sample.json) est un exemple complet
+(toutes les clés, avec une liste `manageable` réaliste : services résidents
+plafonnés à `suspend`, jobs ponctuels quittables) — régénérable via
+`klodymem config show`.
 
 Toutes les clés sont facultatives : une clé absente prend sa valeur par défaut,
 et une clé inconnue est ignorée. Un fichier ne contenant que

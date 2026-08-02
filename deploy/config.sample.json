@@ -1,0 +1,47 @@
+{
+  "actions" : {
+    "allowForceKill" : false,
+    "autoResume" : true,
+    "confirmSamples" : 3,
+    "cooldownSeconds" : 120,
+    "minActionBytes" : 536870912,
+    "notify" : true,
+    "quitAtCritical" : true,
+    "quitGraceSeconds" : 5,
+    "suspendAtHigh" : true
+  },
+  "manageable" : [
+    "Google Chrome",
+    {
+      "maxAction" : "suspend",
+      "name" : "acestep_service.py"
+    },
+    {
+      "maxAction" : "suspend",
+      "name" : "mlx_server_guarded.py"
+    },
+    "indexer_worker.py",
+    "acestep_cli_v15.py",
+    "acestep_cli.py"
+  ],
+  "pollSeconds" : 5,
+  "protected" : [
+
+  ],
+  "reportFloorBytes" : 134217728,
+  "thresholds" : {
+    "criticalHeadroomBytes" : 3221225472,
+    "criticalSwapGrowthBytesPerSec" : 83886080,
+    "criticalSwapRatio" : 0.95,
+    "criticalUsedRatio" : 0.95,
+    "highHeadroomBytes" : 8589934592,
+    "highSwapRatio" : 0.8,
+    "highUsedRatio" : 0.88,
+    "minVMVolumeFreeBytes" : 17179869184,
+    "pressureHeadroomRatio" : 0.25,
+    "trendHeadroomRatio" : 0.25,
+    "watchSwapGrowthBytesPerSec" : 8388608,
+    "watchSwapRatio" : 0.5,
+    "watchUsedRatio" : 0.75
+  }
+}
