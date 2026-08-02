@@ -146,6 +146,46 @@ func runDoctor(config: Config, sampler: MemorySampler) -> Int32 {
                 + overlap.joined(separator: ", "))
     }
 
+    // Le hook appelle le binaire *installé*. Reconstruire sans réinstaller le
+    // laisse pointer sur une version antérieure, qui répond « commande
+    // inconnue » — silencieusement, puisque le hook avale ses erreurs.
+    check("hook de session") {
+        let hook = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".claude/hooks/klodymem-session.sh")
+        guard FileManager.default.fileExists(atPath: hook.path) else {
+            return (.pass, "non installé (facultatif)")
+        }
+        guard FileManager.default.isExecutableFile(atPath: hook.path) else {
+            return (.fail, "présent mais non exécutable : chmod +x \(hook.path)")
+        }
+        let settings = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".claude/settings.json")
+        let registered = (try? String(contentsOf: settings, encoding: .utf8))?
+            .contains("klodymem-session") ?? false
+        guard registered else {
+            return (.warn, "script présent mais absent de settings.json")
+        }
+
+        let task = Process()
+        task.executableURL = hook
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+        do {
+            try task.run()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            task.waitUntilExit()
+            let output = String(decoding: data, as: UTF8.self)
+            guard output.contains("klodymem:") else {
+                return (.fail, "le hook ne produit pas de résumé — binaire installé "
+                    + "obsolète ? relancer deploy/install.sh")
+            }
+            return (.pass, output.split(separator: "\n").first.map(String.init) ?? "ok")
+        } catch {
+            return (.fail, "exécution impossible : \(error.localizedDescription)")
+        }
+    }
+
     check("agent launchd") {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/launchctl")

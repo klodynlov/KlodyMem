@@ -84,6 +84,18 @@ final class BytesTests: XCTestCase {
         XCTAssertNil(Bytes.parse("plein"))
         XCTAssertNil(Bytes.parse(""))
     }
+
+    /// Ce que l'outil affiche doit pouvoir se recoller dans une commande :
+    /// unités françaises, espace, virgule décimale.
+    func testParseAcceptsItsOwnOutput() {
+        XCTAssertEqual(Bytes.parse("64 Gio"), 64 * GiB)
+        XCTAssertEqual(Bytes.parse("19,5 Gio"), UInt64(19.5 * Double(GiB)))
+        XCTAssertEqual(Bytes.parse("512 Mio"), 512 * (1 << 20))
+        XCTAssertEqual(Bytes.parse("512 o"), 512)
+        for value: UInt64 in [512, 4 * GiB, 25 * GiB + 400 * (1 << 20)] {
+            XCTAssertNotNil(Bytes.parse(Bytes.human(value)), "aller-retour sur \(value)")
+        }
+    }
 }
 
 // MARK: - Modèle de risque
@@ -251,6 +263,32 @@ final class ActuatorTests: XCTestCase {
         let result = actuator.perform(.suspend, on: makeGroup(name: "Cobaye", pids: [40000]))
         XCTAssertTrue(result.succeeded)
         XCTAssertTrue(result.message.contains("simulation"))
+    }
+
+    /// Régression constatée en production : Chrome a ignoré la demande d'arrêt,
+    /// et le garde a compté un succès — donc respecté son cooldown pendant que
+    /// la mémoire n'était jamais rendue.
+    func testWaitForExitReportsSurvivors() {
+        let live = getpid()
+        XCTAssertEqual(Actuator.waitForExit([live], timeout: 0.4), [live])
+    }
+
+    func testWaitForExitReturnsEmptyForDeadPIDs() {
+        // PID hors de la plage allouable : garanti absent.
+        XCTAssertTrue(Actuator.waitForExit([pid_t(999_999)], timeout: 0.4).isEmpty)
+    }
+
+    func testWaitForExitDetectsAnActualExit() throws {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        task.arguments = ["0.3"]
+        try task.run()
+        let pid = task.processIdentifier
+        XCTAssertTrue(
+            Actuator.waitForExit([pid], timeout: 3).isEmpty,
+            "la sortie du process doit être détectée avant l'échéance"
+        )
+        task.waitUntilExit()
     }
 
     func testPerformOnProtectedReturnsFailureNotCrash() {
@@ -556,5 +594,70 @@ final class EscalationTests: XCTestCase {
                                         suspendedKeys: []).isEmpty
             )
         }
+    }
+}
+
+
+// MARK: - Résumé de session
+
+final class BriefTests: XCTestCase {
+    private func brief(_ sample: MemorySample, config: Config = Config()) -> [String] {
+        Brief.lines(
+            sample: sample,
+            assessment: RiskModel.assess(sample, thresholds: config.thresholds),
+            groups: [makeGroup(name: "gateway.py", bytes: 36 * GiB, pids: [40000])],
+            state: nil, config: config
+        )
+    }
+
+    func testHealthyMachineIsOneLine() {
+        let lines = brief(makeSample())
+        XCTAssertEqual(lines.count, 1)
+        XCTAssertTrue(lines[0].contains("sain"))
+    }
+
+    func testTenseMachineExplainsAndSuggests() {
+        let lines = brief(makeSample(app: 118 * GiB, cached: GiB / 2, free: GiB))
+        XCTAssertGreaterThan(lines.count, 1)
+        XCTAssertTrue(lines.contains { $0.contains("cause:") })
+        XCTAssertTrue(lines.contains { $0.contains("plus gros:") })
+    }
+
+    /// La commande proposée doit être exécutable telle quelle.
+    func testSuggestedReserveTargetParses() {
+        let lines = brief(makeSample(app: 118 * GiB, cached: GiB / 2, free: GiB))
+        guard let line = lines.first(where: { $0.contains("reserve") }) else {
+            return XCTFail("aucune suggestion de libération")
+        }
+        let token = line
+            .components(separatedBy: "reserve ")[1]
+            .components(separatedBy: .whitespaces)[0]
+        XCTAssertNotNil(Bytes.parse(token), "« \(token) » doit être analysable")
+        XCTAssertGreaterThan(Bytes.parse(token) ?? 0, 0)
+    }
+
+    func testGuardSummaryReflectsArmedActions() {
+        var c = Config()
+        c.manageable = ["Google Chrome"]
+        c.actions.suspendAtHigh = true
+        c.actions.quitAtCritical = true
+        let state = SharedState(
+            date: Date(), tier: .ok, score: 0, summary: "", usedBytes: 0, totalBytes: 0,
+            headroomBytes: 0, swapUsedBytes: 0, swapTotalBytes: 0,
+            swapGrowthBytesPerSec: nil, kernelPressure: .normal, top: [], suspended: [],
+            guardRunning: true, lastAction: nil
+        )
+        let summary = Brief.guardSummary(state: state, config: c)
+        XCTAssertTrue(summary.contains("suspend+quit"), summary)
+    }
+
+    func testStaleStateReadsAsInactive() {
+        let old = SharedState(
+            date: Date(timeIntervalSinceNow: -600), tier: .ok, score: 0, summary: "",
+            usedBytes: 0, totalBytes: 0, headroomBytes: 0, swapUsedBytes: 0,
+            swapTotalBytes: 0, swapGrowthBytesPerSec: nil, kernelPressure: .normal,
+            top: [], suspended: [], guardRunning: true, lastAction: nil
+        )
+        XCTAssertEqual(Brief.guardSummary(state: old, config: Config()), "garde inactif")
     }
 }

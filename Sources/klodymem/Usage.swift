@@ -11,6 +11,7 @@ func printUsage() {
         top [-n N] [--json]          applications par empreinte réelle
         watch [-i SECONDES]          tableau de bord rafraîchi, n'agit jamais
         history [-n N] [--json]      journal des changements de niveau
+        brief                        résumé d'une ligne pour hook ou bannière
 
       \(Ansi.bold("Action"))
         guard [--dry-run]            boucle de surveillance ; applique la politique

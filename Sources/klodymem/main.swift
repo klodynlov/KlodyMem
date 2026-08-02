@@ -134,6 +134,17 @@ case "status", "st":
     }
     exit(assessment.tier >= .high ? 1 : 0)
 
+case "brief":
+    // Destiné aux hooks : jamais d'échec, jamais de code de sortie non nul.
+    // Un démarrage de session ne doit pas casser parce que la mémoire va mal.
+    let sample = sampleWithRates(delay: 0.25)
+    let assessment = RiskModel.assess(sample, thresholds: config.thresholds)
+    let groups = ProcessInventory.currentGroups()
+    for line in Brief.lines(sample: sample, assessment: assessment, groups: groups,
+                            state: SharedState.read(), config: config) {
+        print(line)
+    }
+
 case "top":
     let limit = Int(takeOption("-n", "--limit") ?? "15") ?? 15
     let groups = ProcessInventory.currentGroups()

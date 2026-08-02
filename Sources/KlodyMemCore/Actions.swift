@@ -105,19 +105,58 @@ public struct Actuator {
         )
     }
 
-    /// Arrêt propre : on passe par `NSRunningApplication.terminate()` pour les
-    /// bundles (l'app peut sauvegarder et refuser), SIGTERM sinon.
+    /// Arrêt propre : `NSRunningApplication.terminate()` pour les bundles
+    /// (l'app peut sauvegarder et refuser), SIGTERM sinon.
+    ///
+    /// La demande d'arrêt n'est **pas** l'arrêt. `terminate()` poste un Apple
+    /// Event et rend la main aussitôt ; l'application peut l'ignorer, ouvrir un
+    /// dialogue, ou traîner. Constaté en production : le garde comptait un
+    /// succès, respectait son cooldown, et la mémoire n'était jamais rendue.
+    /// On attend donc la disparition effective des process avant de conclure.
     private func quit(_ group: AppGroup) -> ActionResult {
-        if let app = NSRunningApplication(processIdentifier: group.leaderPID) {
-            let asked = app.terminate()
+        let grace = config.actions.quitGraceSeconds
+
+        guard let app = NSRunningApplication(processIdentifier: group.leaderPID) else {
+            let sent = signalAll(SIGTERM, group, kind: .quit)
+            guard sent.succeeded else { return sent }
+            return verdict(for: group, grace: grace)
+        }
+
+        guard app.terminate() else {
             return ActionResult(
-                kind: .quit, target: group.name, pids: [group.leaderPID],
-                succeeded: asked,
-                message: asked ? "arrêt demandé" : "l'application a refusé l'arrêt",
-                reclaimedBytes: asked ? group.footprintBytes : 0
+                kind: .quit, target: group.name, pids: group.pids, succeeded: false,
+                message: "l'application a refusé la demande d'arrêt", reclaimedBytes: 0
             )
         }
-        return signalAll(SIGTERM, group, kind: .quit)
+        return verdict(for: group, grace: grace)
+    }
+
+    private func verdict(for group: AppGroup, grace: TimeInterval) -> ActionResult {
+        let survivors = Actuator.waitForExit(group.pids, timeout: grace)
+        guard survivors.isEmpty else {
+            return ActionResult(
+                kind: .quit, target: group.name, pids: survivors, succeeded: false,
+                message: "toujours en vie après \(Int(grace)) s — arrêt refusé ou différé",
+                reclaimedBytes: 0
+            )
+        }
+        return ActionResult(
+            kind: .quit, target: group.name, pids: group.pids, succeeded: true,
+            message: "arrêté", reclaimedBytes: group.footprintBytes
+        )
+    }
+
+    /// Attend la disparition des PID, et renvoie ceux qui ont survécu.
+    /// `kill(pid, 0)` ne signale rien : il teste seulement l'existence.
+    static func waitForExit(_ pids: [pid_t], timeout: TimeInterval) -> [pid_t] {
+        let deadline = Date().addingTimeInterval(timeout)
+        var remaining = pids
+        while !remaining.isEmpty, Date() < deadline {
+            remaining = remaining.filter { Darwin.kill($0, 0) == 0 || errno == EPERM }
+            if remaining.isEmpty { break }
+            usleep(150_000)
+        }
+        return remaining
     }
 }
 

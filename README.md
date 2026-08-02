@@ -140,6 +140,13 @@ Trois refus appliqués avant tout envoi de signal, non contournables :
 `SIGKILL` exige `actions.allowForceKill: true`. La barre de menus demande
 confirmation avant tout arrêt.
 
+**Un arrêt demandé n'est pas un arrêt obtenu.** `NSRunningApplication.terminate()`
+poste un Apple Event et rend la main aussitôt ; l'application peut l'ignorer ou
+ouvrir un dialogue. KlodyMem attend donc la disparition effective des process
+pendant `quitGraceSeconds` avant de conclure, et déclare l'échec sinon —
+compter un succès imaginaire ferait respecter un cooldown de deux minutes
+pendant que la mémoire n'est jamais rendue.
+
 Trois protections contre l'emballement : `confirmSamples` échantillons
 consécutifs avant d'agir, escalade uniquement à la montée, et `cooldownSeconds`
 entre deux actions **de même nature** sur la même cible — le cooldown d'un
@@ -221,8 +228,8 @@ fusionneraient sous une seule entrée.
 ## Maintenance
 
 ```sh
-swift test            # 43 tests
-klodymem doctor       # 13 vérifications de bout en bout, sur les sondes réelles
+swift test            # 59 tests
+klodymem doctor       # 14 vérifications de bout en bout, sur les sondes réelles
 klodymem history      # post-mortem : pourquoi la machine a ramé à 3 h
 ```
 

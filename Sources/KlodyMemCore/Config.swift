@@ -49,6 +49,9 @@ public struct ActionPolicy: Codable, Sendable, Equatable {
     public var autoResume: Bool = true
     /// Délai minimal entre deux actions sur la même cible.
     public var cooldownSeconds: Double = 120
+    /// Temps laissé à une application pour honorer une demande d'arrêt avant
+    /// de considérer qu'elle l'a refusée.
+    public var quitGraceSeconds: Double = 5
     /// Nombre d'échantillons consécutifs au-dessus du seuil avant d'agir.
     public var confirmSamples: Int = 3
 

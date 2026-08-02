@@ -27,16 +27,24 @@ public enum Bytes {
 
     /// Parse « 40G », « 4096M », « 12Gi », « 500000000 ».
     public static func parse(_ text: String) -> UInt64? {
-        let s = text.trimmingCharacters(in: .whitespaces).lowercased()
+        // Doit accepter ce que l'outil lui-même affiche : « 19,5 Gio » doit se
+        // recoller dans une commande sans retouche. D'où l'espace toléré, la
+        // virgule décimale, et les unités françaises.
+        let s = text
+            .filter { !$0.isWhitespace }
+            .replacingOccurrences(of: ",", with: ".")
+            .lowercased()
         guard !s.isEmpty else { return nil }
         // Suffixes les plus longs d'abord : « gib » doit gagner avant « gi »,
         // qui doit gagner avant « g ».
         let kib = 1024.0, mib = kib * 1024, gib = mib * 1024, tib = gib * 1024
         let multipliers: [(String, Double)] = [
+            ("tio", tib), ("gio", gib), ("mio", mib), ("kio", kib),
             ("tib", tib), ("gib", gib), ("mib", mib), ("kib", kib),
             ("ti", tib), ("gi", gib), ("mi", mib), ("ki", kib),
             ("tb", 1e12), ("gb", 1e9), ("mb", 1e6), ("kb", 1e3),
             ("t", tib), ("g", gib), ("m", mib), ("k", kib),
+            ("o", 1),
         ]
         for (suffix, mult) in multipliers where s.hasSuffix(suffix) {
             let head = String(s.dropLast(suffix.count))
