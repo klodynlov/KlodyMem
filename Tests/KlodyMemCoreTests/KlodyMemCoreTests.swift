@@ -864,3 +864,52 @@ final class ProportionalityTests: XCTestCase {
         XCTAssertEqual(byName["indexer_worker.py"], .quit)
     }
 }
+
+
+// MARK: - Plancher d'action
+
+final class MinActionTests: XCTestCase {
+    private func armed() -> Config {
+        var c = Config()
+        c.manageable = ["Google Chrome"]
+        c.actions.suspendAtHigh = true
+        c.actions.quitAtCritical = true
+        return c
+    }
+
+    /// Observé en production : Chrome, 345 Mio, gelé pendant qu'il manquait
+    /// 100 Gio. L'utilisateur perd son navigateur, la machine ne gagne rien.
+    func testTinyTargetIsLeftAlone() {
+        let small = makeGroup(name: "Google Chrome", bundle: "/Applications/Google Chrome.app",
+                              bytes: 345 << 20, pids: [40020])
+        for tier in [RiskTier.high, .critical] {
+            XCTAssertTrue(
+                Guardian.plannedActions(tier: tier, groups: [small], config: armed(),
+                                        suspendedKeys: []).isEmpty,
+                "une cible de 345 Mio ne doit pas être touchée au niveau \(tier)"
+            )
+        }
+    }
+
+    func testTargetAboveTheFloorIsStillActedOn() {
+        let big = makeGroup(name: "Google Chrome", bundle: "/Applications/Google Chrome.app",
+                            bytes: 4 * GiB, pids: [40020])
+        XCTAssertEqual(
+            Guardian.plannedActions(tier: .high, groups: [big], config: armed(),
+                                    suspendedKeys: []).map(\.kind),
+            [.suspend]
+        )
+    }
+
+    func testFloorIsConfigurable() {
+        var c = armed()
+        c.actions.minActionBytes = 100 << 20
+        let small = makeGroup(name: "Google Chrome", bundle: "/Applications/Google Chrome.app",
+                              bytes: 345 << 20, pids: [40020])
+        XCTAssertEqual(
+            Guardian.plannedActions(tier: .high, groups: [small], config: c,
+                                    suspendedKeys: []).map(\.kind),
+            [.suspend]
+        )
+    }
+}

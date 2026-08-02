@@ -152,6 +152,13 @@ consécutifs avant d'agir, escalade uniquement à la montée, et `cooldownSecond
 entre deux actions **de même nature** sur la même cible — le cooldown d'un
 `suspend` ne doit pas bloquer l'escalade vers un `quit`.
 
+### Ne pas toucher ce qui ne pèse rien
+
+`actions.minActionBytes` (512 Mio par défaut) est le plancher sous lequel une
+cible est ignorée, même armée. Geler un navigateur de 345 Mio pendant qu'il
+manque 100 Gio est un coût pur : l'utilisateur perd son outil, la machine ne
+gagne rien. Observé en production.
+
 ### Plafonner une cible
 
 Une entrée de `manageable` s'écrit `"Google Chrome"`, ou en forme longue avec
@@ -217,7 +224,8 @@ retomber sur les défauts — l'ancienne reste active et l'incident est journali
     "allowForceKill": false,
     "autoResume": true,              // SIGCONT au retour à « sain »
     "confirmSamples": 3,
-    "cooldownSeconds": 120
+    "cooldownSeconds": 120,
+    "minActionBytes": 536870912       // plancher : en dessous, on ne touche pas
   },
   "thresholds": {
     "criticalHeadroomBytes": 3221225472,
@@ -260,7 +268,7 @@ fusionneraient sous une seule entrée.
 ## Maintenance
 
 ```sh
-swift test            # 75 tests
+swift test            # 78 tests
 klodymem doctor       # 14 vérifications de bout en bout, sur les sondes réelles
 klodymem history      # post-mortem : pourquoi la machine a ramé à 3 h
 ```

@@ -84,6 +84,11 @@ public struct ActionPolicy: Codable, Sendable, Equatable {
     public var quitGraceSeconds: Double = 5
     /// Nombre d'échantillons consécutifs au-dessus du seuil avant d'agir.
     public var confirmSamples: Int = 3
+    /// Empreinte en dessous de laquelle une cible ne vaut pas la peine d'être
+    /// touchée. Geler un navigateur de 300 Mio pendant qu'il manque 100 Gio
+    /// est un coût pur : l'utilisateur perd son outil, la machine ne gagne
+    /// rien. Observé en production.
+    public var minActionBytes: UInt64 = 512 << 20
 
     public init() {}
 
@@ -96,6 +101,7 @@ public struct ActionPolicy: Codable, Sendable, Equatable {
         allowForceKill = c.value(.allowForceKill, d.allowForceKill)
         autoResume = c.value(.autoResume, d.autoResume)
         cooldownSeconds = c.value(.cooldownSeconds, d.cooldownSeconds)
+        minActionBytes = c.value(.minActionBytes, d.minActionBytes)
         quitGraceSeconds = c.value(.quitGraceSeconds, d.quitGraceSeconds)
         confirmSamples = c.value(.confirmSamples, d.confirmSamples)
     }

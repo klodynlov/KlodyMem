@@ -119,6 +119,9 @@ public final class Guardian {
     ) -> [(group: AppGroup, kind: ActionKind)] {
         return groups.compactMap { group in
             guard let cap = config.maxAction(for: group) else { return nil }
+            // Trop petite pour changer quoi que ce soit : la toucher coûterait
+            // à l'utilisateur sans rien rendre à la machine.
+            guard group.footprintBytes >= config.actions.minActionBytes else { return nil }
 
             // Quitter, si la politique l'arme et que la cible l'autorise. Y
             // compris une cible déjà gelée : suspendre n'a rendu aucune
