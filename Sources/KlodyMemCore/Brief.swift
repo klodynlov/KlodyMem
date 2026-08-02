@@ -50,11 +50,19 @@ public enum Brief {
     static func guardSummary(state: SharedState?, config: Config) -> String {
         guard let state, !state.isStale else { return "garde inactif" }
         guard !config.manageable.isEmpty else { return "garde actif (notification seule)" }
-        var s = "garde actif (" + config.manageable.joined(separator: ", ")
+        // Le plafond fait partie de l'information : « acestep → suspend
+        // seulement » se lit autrement que « acestep → suspend+quit ».
+        let capped = config.manageable
+            .filter { $0.maxAction != .quit }
+            .map(\.name)
+        var s = "garde actif (" + config.manageable.map(\.name).joined(separator: ", ")
         var armed: [String] = []
         if config.actions.suspendAtHigh { armed.append("suspend") }
         if config.actions.quitAtCritical { armed.append("quit") }
         s += armed.isEmpty ? " en liste, aucune action armée" : " → " + armed.joined(separator: "+")
+        if !capped.isEmpty {
+            s += "; \(capped.joined(separator: ", ")) plafonné à suspend"
+        }
         return s + ")"
     }
 }

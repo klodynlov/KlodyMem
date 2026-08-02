@@ -696,3 +696,86 @@ final class BriefTests: XCTestCase {
         XCTAssertEqual(Brief.guardSummary(state: old, config: Config()), "garde inactif")
     }
 }
+
+
+// MARK: - Plafond par cible
+
+final class ManagedTargetTests: XCTestCase {
+    private func config(_ targets: [ManagedTarget]) -> Config {
+        var c = Config()
+        c.manageable = targets
+        c.actions.suspendAtHigh = true
+        c.actions.quitAtCritical = true
+        return c
+    }
+
+    private var service: AppGroup {
+        makeGroup(name: "acestep_service.py", bytes: 114 * GiB, pids: [40010])
+    }
+
+    func testShortFormDecodesWithoutCeiling() throws {
+        let list = try JSONDecoder().decode(
+            [ManagedTarget].self, from: Data(#"["Google Chrome"]"#.utf8)
+        )
+        XCTAssertEqual(list, [ManagedTarget(name: "Google Chrome", maxAction: .quit)])
+    }
+
+    func testLongFormDecodesTheCeiling() throws {
+        let json = #"[{"name":"acestep_service.py","maxAction":"suspend"}]"#
+        let list = try JSONDecoder().decode([ManagedTarget].self, from: Data(json.utf8))
+        XCTAssertEqual(list.first?.maxAction, .suspend)
+    }
+
+    func testMixedFormsCoexist() throws {
+        let json = #"["Google Chrome",{"name":"acestep_service.py","maxAction":"suspend"}]"#
+        let list = try JSONDecoder().decode([ManagedTarget].self, from: Data(json.utf8))
+        XCTAssertEqual(list.map(\.name), ["Google Chrome", "acestep_service.py"])
+        XCTAssertEqual(list.map(\.maxAction), [.quit, .suspend])
+    }
+
+    /// Une cible sans plafond se réécrit en forme courte, pour que la config
+    /// reste lisible à la main.
+    func testEncodingRoundTripsAndStaysTerse() throws {
+        let list: [ManagedTarget] = ["Google Chrome",
+                                     ManagedTarget(name: "acestep_service.py", maxAction: .suspend)]
+        let data = try JSONEncoder().encode(list)
+        XCTAssertEqual(try JSONDecoder().decode([ManagedTarget].self, from: data), list)
+        XCTAssertTrue(String(decoding: data, as: UTF8.self).contains("\"Google Chrome\""))
+    }
+
+    /// Le cœur du réglage : un service respawné à la demande rechargerait son
+    /// modèle si on le quittait, et repartirait aussi gros. On le gèle.
+    func testCappedTargetIsSuspendedEvenAtCritical() {
+        let c = config([ManagedTarget(name: "acestep_service.py", maxAction: .suspend)])
+        let plan = Guardian.plannedActions(tier: .critical, groups: [service],
+                                           config: c, suspendedKeys: [])
+        XCTAssertEqual(plan.map(\.kind), [.suspend])
+    }
+
+    func testUncappedTargetIsStillQuitAtCritical() {
+        let c = config([ManagedTarget(name: "acestep_service.py")])
+        let plan = Guardian.plannedActions(tier: .critical, groups: [service],
+                                           config: c, suspendedKeys: [])
+        XCTAssertEqual(plan.map(\.kind), [.quit])
+    }
+
+    /// Une cible plafonnée et déjà gelée n'a plus rien à subir : surtout pas
+    /// un arrêt déguisé.
+    func testCappedAndAlreadySuspendedYieldsNothing() {
+        let frozen = makeGroup(name: "acestep_service.py", bytes: 114 * GiB,
+                               pids: [40010], suspended: true)
+        let c = config([ManagedTarget(name: "acestep_service.py", maxAction: .suspend)])
+        XCTAssertTrue(
+            Guardian.plannedActions(tier: .critical, groups: [frozen],
+                                    config: c, suspendedKeys: []).isEmpty
+        )
+    }
+
+    func testCeilingSurvivesConfigRoundTrip() throws {
+        var c = Config()
+        c.manageable = ["Google Chrome",
+                        ManagedTarget(name: "indexer_worker.py", maxAction: .suspend)]
+        let data = try JSONEncoder().encode(c)
+        XCTAssertEqual(try JSONDecoder().decode(Config.self, from: data), c)
+    }
+}

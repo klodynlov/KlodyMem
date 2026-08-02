@@ -101,6 +101,68 @@ public struct ActionPolicy: Codable, Sendable, Equatable {
     }
 }
 
+/// Une cible que le garde a le droit de toucher, et jusqu'où il peut aller.
+///
+/// S'écrit indifféremment `"Google Chrome"` ou
+/// `{"name": "acestep_service.py", "maxAction": "suspend"}`. La forme courte
+/// reste la plus fréquente ; la longue existe parce que toutes les cibles ne
+/// se valent pas — un service respawné à la demande rechargera son modèle si
+/// on le quitte, et repartira aussi gros qu'avant.
+public struct ManagedTarget: Codable, Sendable, Equatable {
+    public var name: String
+    /// Action la plus grave autorisée. C'est un **plafond**, pas un
+    /// déclencheur : il ne se passe rien tant que la politique globale
+    /// (`suspendAtHigh`, `quitAtCritical`) n'arme pas l'action.
+    public var maxAction: ActionKind
+
+    // Fournir à la fois `init(from:)` et `encode(to:)` supprime la synthèse
+    // des clés : il faut les déclarer.
+    enum CodingKeys: String, CodingKey {
+        case name
+        case maxAction
+    }
+
+    public init(name: String, maxAction: ActionKind = .quit) {
+        self.name = name
+        self.maxAction = maxAction
+    }
+
+    public init(from decoder: Decoder) throws {
+        // Pas de délégation à `self.init` : Swift l'exigerait alors sur tous
+        // les chemins, y compris celui du conteneur nommé.
+        if let single = try? decoder.singleValueContainer(),
+           let shortForm = try? single.decode(String.self) {
+            name = shortForm
+            maxAction = .quit
+            return
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name)
+        maxAction = c.value(.maxAction, ActionKind.quit)
+    }
+
+    /// Réécrit en forme courte quand il n'y a pas de plafond à exprimer, pour
+    /// que la config reste lisible à la main.
+    public func encode(to encoder: Encoder) throws {
+        if maxAction == .quit {
+            var single = encoder.singleValueContainer()
+            try single.encode(name)
+            return
+        }
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(name, forKey: .name)
+        try c.encode(maxAction, forKey: .maxAction)
+    }
+}
+
+extension ManagedTarget: ExpressibleByStringLiteral {
+    /// `["Google Chrome"]` reste la façon d'écrire une cible sans plafond,
+    /// en Swift comme en JSON.
+    public init(stringLiteral value: String) {
+        self.init(name: value)
+    }
+}
+
 public struct Config: Codable, Sendable, Equatable {
     public var pollSeconds: Double = 5
     public var thresholds = Thresholds()
@@ -113,7 +175,7 @@ public struct Config: Codable, Sendable, Equatable {
     /// Seules ces apps peuvent être suspendues ou quittées automatiquement.
     /// Correspondance sur le nom affiché ou le chemin du bundle, insensible à
     /// la casse. Vide = le garde se contente de notifier.
-    public var manageable: [String] = []
+    public var manageable: [ManagedTarget] = []
 
     /// Ignorer les groupes plus petits que ça dans les rapports.
     public var reportFloorBytes: UInt64 = 128 << 20
@@ -213,15 +275,24 @@ public struct Config: Codable, Sendable, Equatable {
     }
 
     public func isManageable(_ group: AppGroup) -> Bool {
-        guard group.ownedByCurrentUser, !isProtected(group) else { return false }
+        target(for: group) != nil
+    }
+
+    /// Action la plus grave autorisée sur ce groupe, ou `nil` s'il est hors
+    /// de portée du garde.
+    public func maxAction(for group: AppGroup) -> ActionKind? {
+        target(for: group)?.maxAction
+    }
+
+    func target(for group: AppGroup) -> ManagedTarget? {
+        guard group.ownedByCurrentUser, !isProtected(group) else { return nil }
         let needle = group.name.lowercased()
         let bundle = (group.bundlePath ?? "").lowercased()
-        for entry in manageable {
-            let e = entry.lowercased()
-            if e.isEmpty { continue }
-            if needle == e || bundle == e || bundle.hasSuffix("/\(e).app") { return true }
+        return manageable.first { entry in
+            let e = entry.name.lowercased()
+            if e.isEmpty { return false }
+            return needle == e || bundle == e || bundle.hasSuffix("/\(e).app")
         }
-        return false
     }
 }
 

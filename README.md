@@ -152,13 +152,36 @@ consécutifs avant d'agir, escalade uniquement à la montée, et `cooldownSecond
 entre deux actions **de même nature** sur la même cible — le cooldown d'un
 `suspend` ne doit pas bloquer l'escalade vers un `quit`.
 
+### Plafonner une cible
+
+Une entrée de `manageable` s'écrit `"Google Chrome"`, ou en forme longue avec
+un plafond :
+
+```jsonc
+"manageable": [
+  "Google Chrome",
+  {"name": "acestep_service.py", "maxAction": "suspend"}
+]
+```
+
+`maxAction` est un **plafond**, pas un déclencheur : rien ne se produit tant
+que la politique globale n'arme pas l'action. Une cible plafonnée à `suspend`
+sera gelée même au niveau `critique`, jamais quittée.
+
+Le cas qui justifie le réglage : un service respawné à la demande. Le quitter
+ne rend la mémoire que le temps qu'il se relance et recharge son modèle — il
+repart aussi gros qu'avant, en pire, puisque le rechargement lui-même fait
+grimper le swap. Le geler laisse le pager récupérer ses pages sans perdre son
+état. Inversement, un batch qui ne sera pas relancé automatiquement gagne à
+être quitté : la mémoire est rendue pour de bon.
+
 ### L'échelle est exclusive
 
 | Niveau | Action, si la cible est dans `manageable` |
 |---|---|
 | `sain`, `surveillance` | aucune |
 | `élevé` | `SIGSTOP` si `suspendAtHigh` |
-| `critique` | arrêt propre si `quitAtCritical`, **sinon** `SIGSTOP` |
+| `critique` | arrêt propre si `quitAtCritical` **et** que la cible l'autorise, `SIGSTOP` sinon |
 | retour à `sain` | `SIGCONT` de tout ce qui a été gelé, si `autoResume` |
 
 Au niveau critique on quitte, on ne suspend pas d'abord : geler une cible puis
@@ -185,6 +208,7 @@ retomber sur les défauts — l'ancienne reste active et l'incident est journali
 {
   "pollSeconds": 5,
   "manageable": ["Google Chrome"],   // seules cibles autorisées ; vide = notifier
+                                     // forme longue : {"name": …, "maxAction": "suspend"}
   "protected": ["Xcode"],            // en plus des 26 protections dures
   "actions": {
     "notify": true,
@@ -234,7 +258,7 @@ fusionneraient sous une seule entrée.
 ## Maintenance
 
 ```sh
-swift test            # 63 tests
+swift test            # 71 tests
 klodymem doctor       # 14 vérifications de bout en bout, sur les sondes réelles
 klodymem history      # post-mortem : pourquoi la machine a ramé à 3 h
 ```

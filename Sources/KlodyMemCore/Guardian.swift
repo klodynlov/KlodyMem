@@ -63,7 +63,9 @@ public final class Guardian {
         actuator = Actuator(config: fresh, dryRun: dryRun)
         streak = (streak.tier, 0)
         print("config rechargée — manageable: "
-            + (fresh.manageable.isEmpty ? "(vide)" : fresh.manageable.joined(separator: ", ")))
+            + (fresh.manageable.isEmpty ? "(vide)"
+               : fresh.manageable.map { "\($0.name)→\($0.maxAction.rawValue)" }
+                   .joined(separator: ", ")))
         fflush(stdout)
     }
 
@@ -115,19 +117,23 @@ public final class Guardian {
         config: Config,
         suspendedKeys: Set<String>
     ) -> [(group: AppGroup, kind: ActionKind)] {
-        let targets = groups.filter { config.isManageable($0) }
+        return groups.compactMap { group in
+            guard let cap = config.maxAction(for: group) else { return nil }
 
-        if tier == .critical, config.actions.quitAtCritical {
-            // Y compris les cibles déjà gelées : suspendre n'a rendu aucune
+            // Quitter, si la politique l'arme et que la cible l'autorise. Y
+            // compris une cible déjà gelée : suspendre n'a rendu aucune
             // mémoire, seulement laissé le pager la récupérer.
-            return targets.map { (group: $0, kind: ActionKind.quit) }
+            if tier == .critical, config.actions.quitAtCritical, cap == .quit {
+                return (group: group, kind: ActionKind.quit)
+            }
+            // Sinon geler — y compris au niveau critique pour une cible
+            // plafonnée à `suspend`, qui reste la meilleure chose à en faire.
+            if tier >= .high, config.actions.suspendAtHigh,
+               !group.suspended, !suspendedKeys.contains(group.key) {
+                return (group: group, kind: ActionKind.suspend)
+            }
+            return nil
         }
-        if tier >= .high, config.actions.suspendAtHigh {
-            return targets
-                .filter { !$0.suspended && !suspendedKeys.contains($0.key) }
-                .map { (group: $0, kind: ActionKind.suspend) }
-        }
-        return []
     }
 
     // MARK: - Machine à états

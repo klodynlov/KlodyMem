@@ -128,17 +128,21 @@ func runDoctor(config: Config, sampler: MemorySampler) -> Int32 {
             return (.warn, "vide — le garde se contentera de notifier")
         }
         let unresolved = config.manageable.filter { entry in
-            !groups.contains { $0.name.lowercased() == entry.lowercased() }
+            !groups.contains { $0.name.lowercased() == entry.name.lowercased() }
         }
+        let described = config.manageable
+            .map { $0.maxAction == .quit ? $0.name : "\($0.name) (max: \($0.maxAction.rawValue))" }
+            .joined(separator: ", ")
         return unresolved.isEmpty
-            ? (.pass, config.manageable.joined(separator: ", "))
-            : (.warn, "non lancées actuellement : " + unresolved.joined(separator: ", "))
+            ? (.pass, described)
+            : (.warn, described + " — non lancées : "
+                + unresolved.map(\.name).joined(separator: ", "))
     }
 
     check("liste protected") {
-        let overlap = config.manageable.filter { entry in
-            config.protected.contains { $0.lowercased() == entry.lowercased() }
-                || Config.hardProtected.contains(where: { $0.lowercased() == entry.lowercased() })
+        let overlap = config.manageable.map(\.name).filter { name in
+            config.protected.contains { $0.lowercased() == name.lowercased() }
+                || Config.hardProtected.contains(where: { $0.lowercased() == name.lowercased() })
         }
         return overlap.isEmpty
             ? (.pass, "\(Config.hardProtected.count) protections dures + \(config.protected.count) locales")
