@@ -28,7 +28,7 @@ neutralisés, avec un test de régression chacun.
 |---|---|---|
 | `phys_footprint` par process | **utilisé** | C'est la colonne « Mémoire » du Moniteur d'activité. Le RSS sous-estime lourdement les process MLX/Metal. |
 | marge = libre + caches récupérables | **utilisé** | Ce qui est réellement allouable sans swapper. |
-| `kern.memorystatus_vm_pressure_level` | **autoritaire** | C'est ce compteur qui déclenche le dialogue système. S'il crie, on ne minimise pas. |
+| `kern.memorystatus_vm_pressure_level` | **corroboré** | C'est ce compteur qui déclenche le dialogue système — mais il reste collé à `critical` longtemps après le retour à la normale (mesuré : `critical` avec 97,5 Gio de marge). Il ne fait autorité que si la marge confirme. |
 | croissance du swap | **pondérée** | Ignorée tant que la marge est confortable : charger un modèle 35B, ou sortir de veille, fait +900 Mio/s sans aucun danger. |
 | ratio swap utilisé/total | **presque ignoré** | Mesuré sur machine saine : reste à ~96 % en permanence. Le pager redimensionne son jeu de swapfiles en continu (observé : 64 → 32 → 20 Gio en dix minutes). Ne compte que si le volume VM ne peut plus grandir. |
 | place libre sur `/System/Volumes/VM` | **utilisé** | Pager acculé = plus de swap possible = c'est là que l'alerte tombe. |
@@ -268,7 +268,7 @@ fusionneraient sous une seule entrée.
 ## Maintenance
 
 ```sh
-swift test            # 78 tests
+swift test            # 79 tests
 klodymem doctor       # 14 vérifications de bout en bout, sur les sondes réelles
 klodymem history      # post-mortem : pourquoi la machine a ramé à 3 h
 ```

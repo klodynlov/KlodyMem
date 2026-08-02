@@ -38,17 +38,28 @@ public enum RiskModel {
     public static func assess(_ sample: MemorySample, thresholds t: Thresholds) -> RiskAssessment {
         var components: [RiskComponent] = []
 
-        // 1. Verdict du noyau — autoritaire, c'est lui qui déclenche l'alerte.
-        let pressureScore: Double
+        // 1. Verdict du noyau, corroboré par la marge réelle.
+        //
+        // `kern.memorystatus_vm_pressure_level` reste collé à `critical` bien
+        // après le retour à la normale : mesuré à `critical` avec 97,5 Gio de
+        // marge libre. Le traiter comme autoritaire sans corroboration a fait
+        // tuer un indexeur deux fois sur une machine qui n'avait aucun besoin
+        // de mémoire. Il garde le dernier mot, mais seulement quand la marge
+        // confirme qu'il y a matière à s'inquiéter.
+        let corroboration = 1 - min(1, sample.headroomRatio / t.pressureHeadroomRatio)
+        let rawPressure: Double
         switch sample.kernelPressure {
-        case .normal: pressureScore = 0
-        case .warning: pressureScore = 0.65
-        case .critical: pressureScore = 1.0
+        case .normal: rawPressure = 0
+        case .warning: rawPressure = 0.65
+        case .critical: rawPressure = 1.0
+        }
+        let pressureScore = rawPressure * corroboration
+        var pressureDetail = "pression noyau \(sample.kernelPressure.label)"
+        if rawPressure > 0, corroboration < 0.35 {
+            pressureDetail += " (marge \(Bytes.human(sample.headroomBytes)), non corroborée)"
         }
         components.append(RiskComponent(
-            name: "pression noyau",
-            score: pressureScore,
-            detail: "pression noyau \(sample.kernelPressure.label)"
+            name: "pression noyau", score: pressureScore, detail: pressureDetail
         ))
 
         // 2. Mémoire utilisée.
@@ -133,9 +144,13 @@ public enum RiskModel {
         default: tier = .critical
         }
 
-        // Le noyau a le dernier mot : s'il crie « critical », on ne minimise pas.
-        if sample.kernelPressure == .critical { tier = .critical }
-        else if sample.kernelPressure == .warning, tier < .high { tier = .high }
+        // Le noyau garde le dernier mot — mais seulement corroboré. Sans cette
+        // condition, un drapeau resté collé déclenche des arrêts sur une
+        // machine qui a 97 Gio de libre.
+        if corroboration >= 0.35 {
+            if sample.kernelPressure == .critical { tier = .critical }
+            else if sample.kernelPressure == .warning, tier < .high { tier = .high }
+        }
 
         return RiskAssessment(tier: tier, score: score, components: components)
     }

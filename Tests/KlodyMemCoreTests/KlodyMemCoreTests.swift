@@ -119,16 +119,35 @@ final class RiskModelTests: XCTestCase {
         XCTAssertEqual(assessment.tier, .critical)
     }
 
-    /// Le noyau est autoritaire : même avec des chiffres flatteurs, sa pression
-    /// critique doit faire basculer le verdict.
-    func testKernelCriticalOverridesCalmNumbers() {
-        let assessment = RiskModel.assess(makeSample(pressure: .critical), thresholds: Thresholds())
-        XCTAssertEqual(assessment.tier, .critical)
+    /// Le noyau garde le dernier mot quand la marge le corrobore : pression
+    /// critique + marge mince = verdict critique.
+    func testKernelCriticalWithThinHeadroomIsCritical() {
+        let sample = makeSample(app: 110 * GiB, cached: 2 * GiB, free: 4 * GiB,
+                                pressure: .critical)
+        XCTAssertEqual(RiskModel.assess(sample, thresholds: Thresholds()).tier, .critical)
     }
 
-    func testKernelWarningFloorsAtHigh() {
-        let assessment = RiskModel.assess(makeSample(pressure: .warning), thresholds: Thresholds())
-        XCTAssertGreaterThanOrEqual(assessment.tier, RiskTier.high)
+    func testKernelWarningWithThinHeadroomFloorsAtHigh() {
+        let sample = makeSample(app: 110 * GiB, cached: 2 * GiB, free: 4 * GiB,
+                                pressure: .warning)
+        XCTAssertGreaterThanOrEqual(
+            RiskModel.assess(sample, thresholds: Thresholds()).tier, RiskTier.high
+        )
+    }
+
+    /// Régression observée en production : `kern.memorystatus_vm_pressure_level`
+    /// est resté à `critical` avec 97,5 Gio de marge, et l'indexeur a été tué
+    /// deux fois pour rien. Non corroboré par la marge, le drapeau ne fait
+    /// plus autorité.
+    func testStuckKernelPressureWithAmpleHeadroomIsIgnored() {
+        let sample = makeSample(pressure: .critical) // marge par défaut : 70 Gio
+        let assessment = RiskModel.assess(sample, thresholds: Thresholds())
+        XCTAssertEqual(assessment.tier, .ok,
+                       "pression collée + 70 Gio de marge ne doit pas alerter")
+        XCTAssertTrue(
+            assessment.components.first { $0.name == "pression noyau" }!
+                .detail.contains("non corroborée")
+        )
     }
 
     /// Un swap qui grimpe alors que la marge est déjà mince : c'est le signal

@@ -38,6 +38,10 @@ public struct Thresholds: Codable, Sendable, Equatable {
     /// Au-dessus de cette fraction de marge, la croissance du swap est
     /// considérée comme du travail normal et non comme un signal de danger.
     public var trendHeadroomRatio: Double = 0.25
+    /// Au-dessus de cette fraction de marge, la pression rapportée par le
+    /// noyau n'est pas corroborée et ne fait plus autorité. Le drapeau
+    /// `memorystatus` reste collé longtemps après le retour à la normale.
+    public var pressureHeadroomRatio: Double = 0.25
 
     /// Sous ce seuil de place libre sur `/System/Volumes/VM`, le pager ne peut
     /// plus agrandir le swap : c'est la configuration qui produit le dialogue
@@ -60,6 +64,7 @@ public struct Thresholds: Codable, Sendable, Equatable {
         watchSwapGrowthBytesPerSec = c.value(.watchSwapGrowthBytesPerSec, d.watchSwapGrowthBytesPerSec)
         criticalSwapGrowthBytesPerSec = c.value(.criticalSwapGrowthBytesPerSec, d.criticalSwapGrowthBytesPerSec)
         trendHeadroomRatio = c.value(.trendHeadroomRatio, d.trendHeadroomRatio)
+        pressureHeadroomRatio = c.value(.pressureHeadroomRatio, d.pressureHeadroomRatio)
         minVMVolumeFreeBytes = c.value(.minVMVolumeFreeBytes, d.minVMVolumeFreeBytes)
     }
 }
