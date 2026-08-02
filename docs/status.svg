@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="781" height="464" viewBox="0 0 781 464" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="14">
+<rect width="100%" height="100%" rx="8" fill="#0d1117"/>
+<circle cx="22" cy="20" r="6" fill="#ff5f57"/><circle cx="42" cy="20" r="6" fill="#febc2e"/><circle cx="62" cy="20" r="6" fill="#28c840"/>
+<text y="44" xml:space="preserve"><tspan x="18.0" fill="#e6edf3">^D</tspan></text>
+<text y="65" xml:space="preserve"><tspan x="18.0" fill="#e6edf3">  </tspan><tspan x="34.8" fill="#e6edf3" font-weight="600">KlodyMem</tspan><tspan x="102.0" fill="#8b949e">  ·  2026-08-02 03:11:22</tspan></text>
+<text y="86" xml:space="preserve"></text>
+<text y="107" xml:space="preserve"><tspan x="18.0" fill="#e6edf3">    Niveau        </tspan><tspan x="169.2" fill="#3fb950">sain</tspan><tspan x="202.8" fill="#8b949e">   score 0.25</tspan></text>
+<text y="128" xml:space="preserve"><tspan x="18.0" fill="#e6edf3">    Cause         rien à signaler</tspan></text>
+<text y="149" xml:space="preserve"></text>
+<text y="170" xml:space="preserve"><tspan x="18.0" fill="#e6edf3">    RAM           128.0 Gio</tspan><tspan x="244.8" fill="#8b949e"> installés</tspan></text>
+<text y="191" xml:space="preserve"><tspan x="18.0" fill="#e6edf3">      Apps          56.6 Gio  █████████</tspan><tspan x="345.6" fill="#8b949e">░░░░░░░░░░░</tspan><tspan x="438.0" fill="#8b949e">  « mémoire allouée aux applications »</tspan></text>
+<text y="212" xml:space="preserve"><tspan x="18.0" fill="#e6edf3">      Wired         12.1 Gio</tspan></text>
+<text y="233" xml:space="preserve"><tspan x="18.0" fill="#e6edf3">      Compressée    18.4 Gio</tspan></text>
+<text y="254" xml:space="preserve"><tspan x="18.0" fill="#e6edf3">      Caches        20.0 Gio</tspan><tspan x="253.2" fill="#8b949e">  récupérables</tspan></text>
+<text y="275" xml:space="preserve"><tspan x="18.0" fill="#e6edf3">      Libre         27.9 Gio</tspan></text>
+<text y="296" xml:space="preserve"><tspan x="18.0" fill="#e6edf3">      Utilisée      87.0 Gio  ██████████████</tspan><tspan x="387.6" fill="#8b949e">░░░░░░</tspan><tspan x="438.0" fill="#8b949e">  68 %</tspan></text>
+<text y="317" xml:space="preserve"><tspan x="18.0" fill="#e6edf3">      Marge       </tspan><tspan x="169.2" fill="#e6edf3" font-weight="600">  47.8 Gio</tspan><tspan x="253.2" fill="#8b949e">  allouable sans swapper</tspan></text>
+<text y="338" xml:space="preserve"></text>
+<text y="359" xml:space="preserve"><tspan x="18.0" fill="#e6edf3">    Swap            25.0 Gio / 26.0 Gio</tspan><tspan x="345.6" fill="#8b949e">  96 %</tspan></text>
+<text y="380" xml:space="preserve"><tspan x="18.0" fill="#e6edf3">                  </tspan><tspan x="169.2" fill="#8b949e">volume VM : 841.5 Gio libres — le pager peut encore grandir</tspan></text>
+<text y="401" xml:space="preserve"></text>
+<text y="422" xml:space="preserve"><tspan x="18.0" fill="#e6edf3">    Noyau         pression normal</tspan></text>
+<text y="443" xml:space="preserve"><tspan x="18.0" fill="#e6edf3">    Compresseur   </tspan><tspan x="169.2" fill="#8b949e">0 compressions/s · 12 décompressions/s</tspan></text>
+</svg>

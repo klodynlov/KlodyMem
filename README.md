@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/klodynlov/KlodyMem/actions/workflows/ci.yml/badge.svg)](https://github.com/klodynlov/KlodyMem/actions/workflows/ci.yml)
 
+<img src="docs/status.svg" alt="Sortie de klodymem status : décomposition RAM, swap, pression noyau, niveau de risque" width="720">
+
 Garde-fou mémoire pour macOS. Surveille la pression réelle, nomme les
 coupables, et agit **avant** le dialogue « Votre système a utilisé toute la
 mémoire allouée aux applications ».
