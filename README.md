@@ -248,7 +248,9 @@ sans message. `install.sh` retire puis resigne ; `doctor` vérifie la signature.
 
 **Les interpréteurs sont nommés par leur script.** Quatre `Python` à 36, 23, 12
 et 4 Gio sont indiscernables ; `mlx_server_guarded.py`, `acestep_service.py`
-ne le sont pas. Lu via `KERN_PROCARGS2`, seulement pour les process ≥ 64 Mio.
+ne le sont pas. Lu via `KERN_PROCARGS2` pour tous les process — ~3 ms pour un
+inventaire complet de 643 process. Un `python -`, qui lit son script sur
+l'entrée standard, n'a pas de nom : il est étiqueté avec son PID.
 
 **Les helpers d'app sont regroupés** sous leur bundle parent, comme le Moniteur
 d'activité — mais un `.app` niché dans un `.framework` n'en est pas un
@@ -258,7 +260,7 @@ fusionneraient sous une seule entrée.
 ## Maintenance
 
 ```sh
-swift test            # 71 tests
+swift test            # 75 tests
 klodymem doctor       # 14 vérifications de bout en bout, sur les sondes réelles
 klodymem history      # post-mortem : pourquoi la machine a ramé à 3 h
 ```

@@ -56,11 +56,12 @@ public enum ProcessInventory {
             let name = procName(bsd) ?? "pid \(pid)"
             let path = execPath(pid) ?? ""
             let bytes = footprint ?? resident ?? 0
-            // Lire la ligne de commande coûte un sysctl par process ; on ne le
-            // fait que pour ceux assez gros pour figurer dans un rapport.
-            let label = bytes >= labelThresholdBytes
-                ? commandLabel(pid: pid, name: name, execPath: path)
-                : name
+            // Étiqueter tout le monde, y compris les petits process. Le seuil
+            // qui existait ici faisait qu'une cible de `manageable` cessait
+            // d'être reconnue dès qu'elle maigrissait, ce qui est exactement
+            // le moment où l'on veut encore savoir que c'est elle. Mesuré :
+            // ~3 ms pour l'inventaire complet, 643 process étiquetés.
+            let label = commandLabel(pid: pid, name: name, execPath: path)
 
             out.append(
                 ProcessEntry(
@@ -150,9 +151,6 @@ public enum ProcessInventory {
         return nil
     }
 
-    /// Sous ce seuil, on ne paie pas le sysctl de lecture d'arguments.
-    static let labelThresholdBytes: UInt64 = 64 << 20
-
     /// Interpréteurs et lanceurs dont le nom de binaire n'apprend rien : pour
     /// eux, c'est le script exécuté qui identifie le process.
     static let genericRunners: Set<String> = [
@@ -178,7 +176,10 @@ public enum ProcessInventory {
             if arg.hasPrefix("-") { continue }
             return shortModule(arg)
         }
-        return name
+        // `python -` lit son script sur l'entrée standard : il n'y a aucun nom
+        // à en tirer. Le PID vaut mieux que quatre entrées « Python »
+        // indiscernables dans un rapport.
+        return "\(name) (pid \(pid))"
     }
 
     /// « /chemin/vers/gateway.py » → « gateway.py » ; « app.main:api » → « app.main ».
@@ -229,16 +230,23 @@ public enum ProcessInventory {
 
     // MARK: - Sondes libproc
 
+    /// `proc_listallpids` compte en **PID**, pas en octets — contrairement à ce
+    /// que laisse croire son paramètre de taille, qui lui est en octets.
+    ///
+    /// Diviser la valeur de retour par `MemoryLayout<pid_t>.size` ne rendait
+    /// donc qu'un quart des process (160 sur 643 mesurés), et le tampon calculé
+    /// de la même façon était trop petit : le sous-ensemble obtenu était
+    /// arbitraire. Des cibles de `manageable` disparaissaient de l'inventaire
+    /// sans le moindre signe.
     static func allPIDs() -> [pid_t] {
-        let needed = proc_listallpids(nil, 0)
-        guard needed > 0 else { return [] }
-        // `proc_listallpids` renvoie des octets ; on double par sécurité, le
-        // nombre de process peut grimper entre les deux appels.
-        let capacity = Int(needed) * 2 / MemoryLayout<pid_t>.size + 64
+        let count = proc_listallpids(nil, 0)
+        guard count > 0 else { return [] }
+        // Large marge : la table des process bouge entre les deux appels.
+        let capacity = Int(count) * 2 + 256
         var buffer = [pid_t](repeating: 0, count: capacity)
         let written = proc_listallpids(&buffer, Int32(capacity * MemoryLayout<pid_t>.size))
         guard written > 0 else { return [] }
-        return Array(buffer.prefix(Int(written) / MemoryLayout<pid_t>.size))
+        return Array(buffer.prefix(min(Int(written), capacity)))
     }
 
     static func physFootprint(_ pid: pid_t) -> UInt64? {

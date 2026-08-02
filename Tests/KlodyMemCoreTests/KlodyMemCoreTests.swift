@@ -483,6 +483,37 @@ final class LiveProbeTests: XCTestCase {
         XCTAssertNotNil(sampler.sample().swapGrowthBytesPerSec)
     }
 
+    /// Régression : `proc_listallpids` compte en PID et non en octets. La
+    /// division par `MemoryLayout<pid_t>.size` ne rendait qu'un quart des
+    /// process, et des cibles armées disparaissaient sans signe.
+    func testAllPIDsMatchesTheSystemCount() throws {
+        let ps = Process()
+        ps.executableURL = URL(fileURLWithPath: "/bin/ps")
+        ps.arguments = ["-Ao", "pid="]
+        let pipe = Pipe()
+        ps.standardOutput = pipe
+        try ps.run()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        ps.waitUntilExit()
+        let expected = String(decoding: data, as: UTF8.self)
+            .split(separator: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            .count
+
+        let got = ProcessInventory.allPIDs().count
+        XCTAssertGreaterThan(expected, 50, "le système doit avoir bien plus de 50 process")
+        // ±15 % : la table bouge entre les deux mesures.
+        XCTAssertEqual(Double(got), Double(expected), accuracy: Double(expected) * 0.15,
+                       "allPIDs() rend \(got) PID, ps en compte \(expected)")
+    }
+
+    /// Les process lourds de l'utilisateur doivent tous être atteignables :
+    /// c'est la condition pour que `manageable` fonctionne.
+    func testInventoryCoversLargeUserProcesses() {
+        let entries = ProcessInventory.snapshot()
+        let mine = entries.filter { $0.uid == getuid() }
+        XCTAssertGreaterThan(mine.count, 20, "trop peu de process utilisateur visibles")
+    }
+
     func testInventoryFindsThisProcess() {
         let entries = ProcessInventory.snapshot()
         XCTAssertFalse(entries.isEmpty)
@@ -777,5 +808,59 @@ final class ManagedTargetTests: XCTestCase {
                         ManagedTarget(name: "indexer_worker.py", maxAction: .suspend)]
         let data = try JSONEncoder().encode(c)
         XCTAssertEqual(try JSONDecoder().decode(Config.self, from: data), c)
+    }
+}
+
+
+// MARK: - Proportionnalité
+
+final class ProportionalityTests: XCTestCase {
+    /// Le garde traite les plus gros d'abord : c'est la seule façon qu'une
+    /// action unique suffise et que les autres cibles soient épargnées.
+    func testPlanIsOrderedByFootprintDescending() {
+        var c = Config()
+        c.manageable = [
+            ManagedTarget(name: "petit", maxAction: .suspend),
+            ManagedTarget(name: "gros", maxAction: .suspend),
+            ManagedTarget(name: "moyen", maxAction: .suspend),
+        ]
+        c.actions.suspendAtHigh = true
+        let groups = [
+            makeGroup(name: "petit", bytes: 2 * GiB, pids: [40001]),
+            makeGroup(name: "gros", bytes: 100 * GiB, pids: [40002]),
+            makeGroup(name: "moyen", bytes: 30 * GiB, pids: [40003]),
+        ]
+        let ordered = Guardian.plannedActions(
+            tier: .high, groups: groups, config: c, suspendedKeys: []
+        ).sorted { $0.group.footprintBytes > $1.group.footprintBytes }
+        XCTAssertEqual(ordered.map(\.group.name), ["gros", "moyen", "petit"])
+    }
+
+    /// Trois services lourds armés ne doivent pas produire trois actions
+    /// distinctes par tour au niveau élevé — le plan les liste tous, c'est
+    /// l'exécution qui s'arrête dès que la pression retombe.
+    func testAllEligibleTargetsArePlannedButOrdered() {
+        var c = Config()
+        c.manageable = [
+            ManagedTarget(name: "acestep_service.py", maxAction: .suspend),
+            ManagedTarget(name: "mlx_server_guarded.py", maxAction: .suspend),
+            "indexer_worker.py",
+        ]
+        c.actions.suspendAtHigh = true
+        c.actions.quitAtCritical = true
+        let groups = [
+            makeGroup(name: "acestep_service.py", bytes: 115 * GiB, pids: [40010]),
+            makeGroup(name: "mlx_server_guarded.py", bytes: 36 * GiB, pids: [40011]),
+            makeGroup(name: "indexer_worker.py", bytes: 34 * GiB, pids: [40012]),
+        ]
+        let plan = Guardian.plannedActions(
+            tier: .critical, groups: groups, config: c, suspendedKeys: []
+        )
+        XCTAssertEqual(plan.count, 3)
+        // Les deux plafonnés sont gelés, le batch est quitté.
+        let byName = Dictionary(uniqueKeysWithValues: plan.map { ($0.group.name, $0.kind) })
+        XCTAssertEqual(byName["acestep_service.py"], .suspend)
+        XCTAssertEqual(byName["mlx_server_guarded.py"], .suspend)
+        XCTAssertEqual(byName["indexer_worker.py"], .quit)
     }
 }

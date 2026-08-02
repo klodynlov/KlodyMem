@@ -166,9 +166,23 @@ public final class Guardian {
 
         var performed: [String] = []
 
-        for (group, kind) in Guardian.plannedActions(
+        // Les plus gros d'abord, et on s'arrête dès que la pression retombe.
+        //
+        // Geler d'un bloc toutes les cibles éligibles fige toute la pile locale
+        // pour un pic que la première aurait absorbé. L'action doit être
+        // proportionnée : une cible, on remesure, on continue seulement si
+        // c'est encore nécessaire.
+        let planned = Guardian.plannedActions(
             tier: tier, groups: groups, config: config, suspendedKeys: suspendedKeys
-        ) where allowedNow(group.key, kind) {
+        ).sorted { $0.group.footprintBytes > $1.group.footprintBytes }
+
+        for (index, step) in planned.enumerated() {
+            let (group, kind) = (step.group, step.kind)
+            guard allowedNow(group.key, kind) else { continue }
+            if index > 0, !stillNeedsAction(atLeast: tier) {
+                log("  pression retombée — \(planned.count - index) cible(s) épargnée(s)")
+                break
+            }
             // Un process gelé n'exécute plus rien : il ne traitera jamais une
             // demande d'arrêt. Le réveiller d'abord, sinon `quit` reste sans
             // effet et la mémoire n'est jamais rendue.
@@ -177,7 +191,10 @@ public final class Guardian {
                 suspendedKeys.remove(group.key)
             }
             let result = actuator.perform(kind, on: group)
-            guard result.succeeded else { continue }
+            guard result.succeeded else {
+                log("  ✗ \(kind.rawValue):\(group.name) — \(result.message)")
+                continue
+            }
             if kind == .suspend { suspendedKeys.insert(group.key) }
             markActed(group.key, kind)
             performed.append("\(kind.rawValue):\(group.name)")
@@ -234,6 +251,15 @@ public final class Guardian {
         let stamp = ISO8601DateFormatter().string(from: Date())
         print("[\(stamp)] \(message)")
         fflush(stdout)
+    }
+
+    /// La pression justifie-t-elle encore d'agir ? Remesurée après chaque
+    /// action, avec un court délai pour laisser le pager récupérer les pages
+    /// de la cible qu'on vient de geler.
+    private func stillNeedsAction(atLeast tier: RiskTier) -> Bool {
+        usleep(400_000)
+        let fresh = sampler.sample()
+        return RiskModel.assess(fresh, thresholds: config.thresholds).tier >= tier
     }
 
     private func allowedNow(_ key: String, _ kind: ActionKind) -> Bool {
