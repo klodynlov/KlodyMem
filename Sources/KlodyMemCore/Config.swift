@@ -1,5 +1,18 @@
 import Foundation
 
+extension KeyedDecodingContainer {
+    /// Clé absente ou du mauvais type : on retombe sur la valeur par défaut.
+    ///
+    /// Le `Codable` synthétisé exige au contraire *toutes* les clés, valeurs
+    /// par défaut comprises. Ajouter un réglage rendait donc illisibles toutes
+    /// les configs déjà écrites — constaté en production, l'agent est parti en
+    /// boucle de redémarrage.
+    func value<T: Decodable>(_ key: Key, _ fallback: T) -> T {
+        guard let decoded = try? decodeIfPresent(T.self, forKey: key) else { return fallback }
+        return decoded ?? fallback
+    }
+}
+
 /// Seuils du modèle de risque. Toutes les valeurs sont surchargeables depuis
 /// `~/.config/klodymem/config.json`.
 public struct Thresholds: Codable, Sendable, Equatable {
@@ -32,6 +45,23 @@ public struct Thresholds: Codable, Sendable, Equatable {
     public var minVMVolumeFreeBytes: UInt64 = 16 << 30
 
     public init() {}
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = Thresholds()
+        watchUsedRatio = c.value(.watchUsedRatio, d.watchUsedRatio)
+        highUsedRatio = c.value(.highUsedRatio, d.highUsedRatio)
+        criticalUsedRatio = c.value(.criticalUsedRatio, d.criticalUsedRatio)
+        highHeadroomBytes = c.value(.highHeadroomBytes, d.highHeadroomBytes)
+        criticalHeadroomBytes = c.value(.criticalHeadroomBytes, d.criticalHeadroomBytes)
+        watchSwapRatio = c.value(.watchSwapRatio, d.watchSwapRatio)
+        highSwapRatio = c.value(.highSwapRatio, d.highSwapRatio)
+        criticalSwapRatio = c.value(.criticalSwapRatio, d.criticalSwapRatio)
+        watchSwapGrowthBytesPerSec = c.value(.watchSwapGrowthBytesPerSec, d.watchSwapGrowthBytesPerSec)
+        criticalSwapGrowthBytesPerSec = c.value(.criticalSwapGrowthBytesPerSec, d.criticalSwapGrowthBytesPerSec)
+        trendHeadroomRatio = c.value(.trendHeadroomRatio, d.trendHeadroomRatio)
+        minVMVolumeFreeBytes = c.value(.minVMVolumeFreeBytes, d.minVMVolumeFreeBytes)
+    }
 }
 
 /// Escalade autorisée. Volontairement conservatrice par défaut : le garde
@@ -56,6 +86,19 @@ public struct ActionPolicy: Codable, Sendable, Equatable {
     public var confirmSamples: Int = 3
 
     public init() {}
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = ActionPolicy()
+        notify = c.value(.notify, d.notify)
+        suspendAtHigh = c.value(.suspendAtHigh, d.suspendAtHigh)
+        quitAtCritical = c.value(.quitAtCritical, d.quitAtCritical)
+        allowForceKill = c.value(.allowForceKill, d.allowForceKill)
+        autoResume = c.value(.autoResume, d.autoResume)
+        cooldownSeconds = c.value(.cooldownSeconds, d.cooldownSeconds)
+        quitGraceSeconds = c.value(.quitGraceSeconds, d.quitGraceSeconds)
+        confirmSamples = c.value(.confirmSamples, d.confirmSamples)
+    }
 }
 
 public struct Config: Codable, Sendable, Equatable {
@@ -76,6 +119,17 @@ public struct Config: Codable, Sendable, Equatable {
     public var reportFloorBytes: UInt64 = 128 << 20
 
     public init() {}
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = Config()
+        pollSeconds = c.value(.pollSeconds, d.pollSeconds)
+        thresholds = c.value(.thresholds, d.thresholds)
+        actions = c.value(.actions, d.actions)
+        protected = c.value(.protected, d.protected)
+        manageable = c.value(.manageable, d.manageable)
+        reportFloorBytes = c.value(.reportFloorBytes, d.reportFloorBytes)
+    }
 
     /// Process dont la suspension ou l'arrêt casse la session. Non
     /// surchargeable depuis la config : c'est le garde-fou de dernier recours.

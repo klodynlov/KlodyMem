@@ -52,7 +52,17 @@ let config: Config
 do {
     config = try Config.load()
 } catch {
-    fail("\(error)")
+    // Le daemon ne doit pas mourir sur une config invalide : launchd le
+    // relancerait en boucle, et la machine se retrouverait sans surveillance
+    // au pire moment. Il dégrade vers les défauts — posture la plus sûre,
+    // `manageable` y étant vide — et reprendra la vraie config au hot-reload
+    // dès qu'elle sera réparée.
+    guard command == "guard" else { fail("\(error)") }
+    let warning = "klodymem: \(error)\n"
+        + "  → démarrage sur les valeurs par défaut (notification seule).\n"
+        + "  → corrigez le fichier, il sera relu à chaud.\n"
+    FileHandle.standardError.write(Data(warning.utf8))
+    config = Config()
 }
 
 let sampler = MemorySampler()

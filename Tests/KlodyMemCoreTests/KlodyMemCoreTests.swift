@@ -224,6 +224,41 @@ final class ConfigPolicyTests: XCTestCase {
         XCTAssertFalse(config.isManageable(makeGroup(name: "someroot", mine: false)))
     }
 
+    /// Régression : ajouter un réglage a rendu illisibles toutes les configs
+    /// déjà écrites, et l'agent est parti en boucle de redémarrage. Une clé
+    /// absente doit valoir sa valeur par défaut.
+    func testDecodingToleratesMissingKeys() throws {
+        let json = Data(#"{"manageable":["Google Chrome"]}"#.utf8)
+        let c = try JSONDecoder().decode(Config.self, from: json)
+        XCTAssertEqual(c.manageable, ["Google Chrome"])
+        XCTAssertEqual(c.pollSeconds, Config().pollSeconds)
+        XCTAssertEqual(c.actions.quitGraceSeconds, ActionPolicy().quitGraceSeconds)
+        XCTAssertEqual(c.thresholds.criticalHeadroomBytes, Thresholds().criticalHeadroomBytes)
+    }
+
+    func testDecodingAnEmptyObjectGivesDefaults() throws {
+        XCTAssertEqual(try JSONDecoder().decode(Config.self, from: Data("{}".utf8)), Config())
+    }
+
+    /// Une config partielle ne doit pas perdre ce qu'elle précise.
+    func testPartialSectionsKeepTheirOverrides() throws {
+        let json = Data(#"{"actions":{"quitAtCritical":true},"thresholds":{"trendHeadroomRatio":0.5}}"#.utf8)
+        let c = try JSONDecoder().decode(Config.self, from: json)
+        XCTAssertTrue(c.actions.quitAtCritical)
+        XCTAssertEqual(c.thresholds.trendHeadroomRatio, 0.5)
+        XCTAssertEqual(c.actions.confirmSamples, ActionPolicy().confirmSamples)
+        XCTAssertEqual(c.thresholds.watchUsedRatio, Thresholds().watchUsedRatio)
+    }
+
+    /// Aller-retour : ce que l'outil écrit doit se relire à l'identique.
+    func testSaveLoadRoundTrip() throws {
+        var c = Config()
+        c.manageable = ["Google Chrome"]
+        c.actions.suspendAtHigh = true
+        let data = try JSONEncoder().encode(c)
+        XCTAssertEqual(try JSONDecoder().decode(Config.self, from: data), c)
+    }
+
     func testEmptyManageableEntriesAreIgnored() {
         var config = Config()
         config.manageable = ["", "  "]

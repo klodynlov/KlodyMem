@@ -171,6 +171,12 @@ n'avait rendu aucune mémoire.
 
 `~/.config/klodymem/config.json` — `klodymem config init` écrit les défauts.
 
+Toutes les clés sont facultatives : une clé absente prend sa valeur par défaut,
+et une clé inconnue est ignorée. Un fichier ne contenant que
+`{"manageable": ["Google Chrome"]}` est valide. Sans cette tolérance, ajouter
+un réglage à l'outil rendrait illisibles toutes les configs déjà écrites — et
+le daemon, mort au démarrage, serait relancé en boucle par launchd.
+
 Le garde relit le fichier dès qu'il change, sans redémarrage : la ligne
 « config rechargée » apparaît dans `guard.log`. Une config cassée ne fait pas
 retomber sur les défauts — l'ancienne reste active et l'incident est journalisé.
@@ -228,7 +234,7 @@ fusionneraient sous une seule entrée.
 ## Maintenance
 
 ```sh
-swift test            # 59 tests
+swift test            # 63 tests
 klodymem doctor       # 14 vérifications de bout en bout, sur les sondes réelles
 klodymem history      # post-mortem : pourquoi la machine a ramé à 3 h
 ```
