@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    # Runner macOS obligatoire : le cœur repose sur libproc, Mach et AppKit.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version Swift
+        run: swift --version
+
+      - name: Build
+        run: swift build
+
+      - name: Tests
+        # Les tests incluent des sondes réelles (inventaire process, échantillon
+        # mémoire) : elles tournent aussi sur le runner, qui est un vrai macOS.
+        run: swift test
