@@ -122,6 +122,57 @@ public enum ProcessInventory {
         groups(from: snapshot())
     }
 
+    // MARK: - Ordre d'action sur l'arbre vivant
+
+    /// PID à signaler pour agir sur **tout l'arbre vivant** d'un groupe, dans
+    /// le bon ordre.
+    ///
+    /// `group.pids` est un instantané figé. Un navigateur — ou un worker
+    /// Python multiprocess — engendre et tue des enfants en permanence :
+    /// signaler ce seul instantané laisse les enfants nés depuis tourner. Gelé,
+    /// le leader se retrouve alors coincé pendant que ses enfants continuent
+    /// (le gel partiel qui a bloqué Chrome). On repart donc de l'arbre réel au
+    /// moment d'agir : descendants du leader, réunis aux `roots` encore vivants
+    /// (couvre les orphelins ré-parentés à launchd si le leader est déjà mort).
+    ///
+    /// Gel/kill (`resuming == false`) : feuilles d'abord, racine en dernier —
+    /// sinon une racine encore vive relance un enfant qu'on vient de geler.
+    /// Reprise (`resuming == true`) : racine d'abord.
+    static func actionOrder(
+        roots: [pid_t], leader: pid_t, entries: [ProcessEntry], resuming: Bool
+    ) -> [pid_t] {
+        var childrenOf: [pid_t: [pid_t]] = [:]
+        var alive: Set<pid_t> = []
+        for e in entries {
+            alive.insert(e.pid)
+            childrenOf[e.ppid, default: []].append(e.pid)
+        }
+
+        // Profondeur depuis le leader, par parcours en largeur.
+        var depth: [pid_t: Int] = [:]
+        var queue: [(pid_t, Int)] = [(leader, 0)]
+        var head = 0
+        while head < queue.count {
+            let (pid, d) = queue[head]; head += 1
+            if depth[pid] != nil { continue }
+            depth[pid] = d
+            for child in childrenOf[pid] ?? [] where depth[child] == nil {
+                queue.append((child, d + 1))
+            }
+        }
+        // Racines fournies mais hors de l'arbre (leader mort, orphelin
+        // ré-parenté) : traitées comme des racines, profondeur 0.
+        for r in roots where depth[r] == nil { depth[r] = 0 }
+
+        return depth.keys
+            .filter { alive.contains($0) }
+            .sorted { a, b in
+                let da = depth[a] ?? 0, db = depth[b] ?? 0
+                if da != db { return resuming ? da < db : da > db }
+                return a < b // ordre stable et déterministe
+            }
+    }
+
     // MARK: - Regroupement
 
     /// Clé de regroupement : le bundle `.app` le plus externe du chemin, sinon

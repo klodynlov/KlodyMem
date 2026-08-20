@@ -118,7 +118,7 @@ public final class Guardian {
         suspendedKeys: Set<String>
     ) -> [(group: AppGroup, kind: ActionKind)] {
         return groups.compactMap { group in
-            guard let cap = config.maxAction(for: group) else { return nil }
+            guard let target = config.target(for: group) else { return nil }
             // Trop petite pour changer quoi que ce soit : la toucher coûterait
             // à l'utilisateur sans rien rendre à la machine.
             guard group.footprintBytes >= config.actions.minActionBytes else { return nil }
@@ -126,12 +126,14 @@ public final class Guardian {
             // Quitter, si la politique l'arme et que la cible l'autorise. Y
             // compris une cible déjà gelée : suspendre n'a rendu aucune
             // mémoire, seulement laissé le pager la récupérer.
-            if tier == .critical, config.actions.quitAtCritical, cap == .quit {
+            if tier == .critical, config.actions.quitAtCritical, target.maxAction == .quit {
                 return (group: group, kind: ActionKind.quit)
             }
             // Sinon geler — y compris au niveau critique pour une cible
             // plafonnée à `suspend`, qui reste la meilleure chose à en faire.
-            if tier >= .high, config.actions.suspendAtHigh,
+            // Sauf les cibles non-suspendables (navigateurs) : les geler les
+            // casse au dégel, on attend le niveau critique pour les quitter.
+            if tier >= .high, config.actions.suspendAtHigh, target.suspendable,
                !group.suspended, !suspendedKeys.contains(group.key) {
                 return (group: group, kind: ActionKind.suspend)
             }

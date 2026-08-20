@@ -680,6 +680,41 @@ final class EscalationTests: XCTestCase {
             )
         }
     }
+
+    private func quitOnly(quit: Bool) -> Config {
+        var c = armed(quit: quit)
+        // Navigateur : jamais gelé, seulement quitté. SIGSTOP casse Chromium au
+        // dégel (chiens de garde IPC/GPU), donc `suspendable: false`.
+        c.manageable = [ManagedTarget(name: "Google Chrome", maxAction: .quit, suspendable: false)]
+        return c
+    }
+
+    /// Le cœur du correctif Chrome : au niveau élevé, un navigateur
+    /// non-suspendable n'est **pas** gelé. On attend le critique pour le quitter.
+    func testNonSuspendableBrowserIsNeverFrozenAtHigh() {
+        let plan = Guardian.plannedActions(
+            tier: .high, groups: [chrome], config: quitOnly(quit: true), suspendedKeys: []
+        )
+        XCTAssertTrue(plan.isEmpty, "un navigateur non-suspendable ne doit jamais être gelé")
+    }
+
+    func testNonSuspendableBrowserStillQuitsAtCritical() {
+        let plan = Guardian.plannedActions(
+            tier: .critical, groups: [chrome], config: quitOnly(quit: true), suspendedKeys: []
+        )
+        XCTAssertEqual(plan.map(\.kind), [.quit])
+    }
+
+    /// Quit désarmé : une cible non-suspendable n'a plus aucune action
+    /// possible — surtout pas un gel de repli.
+    func testNonSuspendableNeverFallsBackToSuspend() {
+        for tier in RiskTier.allCases {
+            let plan = Guardian.plannedActions(
+                tier: tier, groups: [chrome], config: quitOnly(quit: false), suspendedKeys: []
+            )
+            XCTAssertFalse(plan.contains { $0.kind == .suspend }, "aucun gel au niveau \(tier)")
+        }
+    }
 }
 
 
@@ -791,6 +826,29 @@ final class ManagedTargetTests: XCTestCase {
         let data = try JSONEncoder().encode(list)
         XCTAssertEqual(try JSONDecoder().decode([ManagedTarget].self, from: data), list)
         XCTAssertTrue(String(decoding: data, as: UTF8.self).contains("\"Google Chrome\""))
+    }
+
+    func testSuspendableDefaultsTrue() throws {
+        let short = try JSONDecoder().decode(
+            [ManagedTarget].self, from: Data(#"["Google Chrome"]"#.utf8)
+        )
+        XCTAssertTrue(short[0].suspendable)
+        let long = try JSONDecoder().decode(
+            [ManagedTarget].self, from: Data(#"[{"name":"x.py","maxAction":"suspend"}]"#.utf8)
+        )
+        XCTAssertTrue(long[0].suspendable, "absent = suspendable par défaut")
+    }
+
+    func testSuspendableFalseDecodesAndRoundTrips() throws {
+        let json = #"[{"name":"Google Chrome","maxAction":"quit","suspendable":false}]"#
+        let list = try JSONDecoder().decode([ManagedTarget].self, from: Data(json.utf8))
+        XCTAssertFalse(list[0].suspendable)
+        XCTAssertEqual(list[0].maxAction, .quit)
+        // Une cible non-suspendable ne peut pas se réécrire en forme courte :
+        // le drapeau doit survivre à l'encodage.
+        let data = try JSONEncoder().encode(list)
+        XCTAssertTrue(String(decoding: data, as: UTF8.self).contains("suspendable"))
+        XCTAssertEqual(try JSONDecoder().decode([ManagedTarget].self, from: data), list)
     }
 
     /// Le cœur du réglage : un service respawné à la demande rechargerait son
@@ -929,6 +987,71 @@ final class MinActionTests: XCTestCase {
             Guardian.plannedActions(tier: .high, groups: [small], config: c,
                                     suspendedKeys: []).map(\.kind),
             [.suspend]
+        )
+    }
+}
+
+
+// MARK: - Ordre d'action sur l'arbre vivant
+
+/// Le gel/dégel doit porter sur l'arbre **réel** au moment d'agir, pas sur
+/// l'instantané figé du groupe — c'est la cause directe du blocage de Chrome
+/// (leader gelé, moteurs de rendu encore vifs).
+final class ActionOrderTests: XCTestCase {
+    private func entry(_ pid: pid_t, ppid: pid_t) -> ProcessEntry {
+        ProcessEntry(pid: pid, ppid: ppid, uid: getuid(), name: "p\(pid)",
+                     execPath: "/x/p\(pid)", footprintBytes: 0, residentBytes: 0,
+                     suspended: false, label: "p\(pid)")
+    }
+
+    /// Gel : les feuilles d'abord, la racine en dernier — sinon la racine
+    /// encore vive relance un enfant qu'on vient de geler.
+    func testSuspendFreezesLeavesBeforeLeader() {
+        let tree = [entry(100, ppid: 1), entry(101, ppid: 100), entry(102, ppid: 101)]
+        let order = ProcessInventory.actionOrder(
+            roots: [100], leader: 100, entries: tree, resuming: false
+        )
+        XCTAssertEqual(order, [102, 101, 100])
+    }
+
+    /// Reprise : la racine d'abord.
+    func testResumeThawsLeaderBeforeLeaves() {
+        let tree = [entry(100, ppid: 1), entry(101, ppid: 100), entry(102, ppid: 101)]
+        let order = ProcessInventory.actionOrder(
+            roots: [100], leader: 100, entries: tree, resuming: true
+        )
+        XCTAssertEqual(order, [100, 101, 102])
+    }
+
+    /// Le bug Chrome exactement : un moteur de rendu né *après* l'instantané
+    /// (absent de `roots`) est tout de même gelé, et le leader passe en dernier.
+    func testChildSpawnedAfterSnapshotIsStillFrozen() {
+        let tree = [entry(100, ppid: 1), entry(101, ppid: 100), entry(999, ppid: 100)]
+        let order = ProcessInventory.actionOrder(
+            roots: [100, 101], leader: 100, entries: tree, resuming: false
+        )
+        XCTAssertTrue(order.contains(999), "l'enfant récent doit être gelé")
+        XCTAssertEqual(order.last, 100, "le leader gelé en dernier")
+    }
+
+    /// Un PID de `roots` déjà mort est écarté ; un orphelin ré-parenté à
+    /// launchd (hors de l'arbre du leader) reste repris — sinon il resterait
+    /// gelé pour toujours.
+    func testDeadRootDroppedReparentedOrphanKept() {
+        let tree = [entry(100, ppid: 1), entry(200, ppid: 1)] // 200 ré-parenté launchd
+        let order = ProcessInventory.actionOrder(
+            roots: [100, 200, 40000], leader: 100, entries: tree, resuming: true
+        )
+        XCTAssertEqual(Set(order), [100, 200], "40000 mort écarté, 200 orphelin gardé")
+    }
+
+    /// Cible entièrement disparue : aucun PID vivant, le repli en amont
+    /// (`signalAll`) reprend la main.
+    func testAllDeadYieldsEmpty() {
+        XCTAssertTrue(
+            ProcessInventory.actionOrder(
+                roots: [40000], leader: 40000, entries: [], resuming: false
+            ).isEmpty
         )
     }
 }

@@ -125,17 +125,31 @@ public struct ManagedTarget: Codable, Sendable, Equatable {
     /// déclencheur : il ne se passe rien tant que la politique globale
     /// (`suspendAtHigh`, `quitAtCritical`) n'arme pas l'action.
     public var maxAction: ActionKind
+    /// Autorise le gel (SIGSTOP) comme palier intermédiaire au niveau
+    /// « élevé ». `false` interdit **tout** gel : la cible n'est jamais
+    /// suspendue, seulement quittée au niveau critique.
+    ///
+    /// Indispensable pour les navigateurs et applications Chromium/Electron :
+    /// SIGSTOP fige le process leader pendant que ses moteurs de rendu et le
+    /// WindowServer continuent de lui parler. Au bout de quelques dizaines de
+    /// secondes leurs chiens de garde IPC/GPU expirent, et l'application ne se
+    /// rétablit plus jamais au dégel — constaté sur Google Chrome, gelé plus
+    /// d'une heure puis « repris » sans réponse. Pour ces cibles, quitter
+    /// proprement (l'app restaure sa session) est la seule action sûre.
+    public var suspendable: Bool
 
     // Fournir à la fois `init(from:)` et `encode(to:)` supprime la synthèse
     // des clés : il faut les déclarer.
     enum CodingKeys: String, CodingKey {
         case name
         case maxAction
+        case suspendable
     }
 
-    public init(name: String, maxAction: ActionKind = .quit) {
+    public init(name: String, maxAction: ActionKind = .quit, suspendable: Bool = true) {
         self.name = name
         self.maxAction = maxAction
+        self.suspendable = suspendable
     }
 
     public init(from decoder: Decoder) throws {
@@ -145,17 +159,19 @@ public struct ManagedTarget: Codable, Sendable, Equatable {
            let shortForm = try? single.decode(String.self) {
             name = shortForm
             maxAction = .quit
+            suspendable = true
             return
         }
         let c = try decoder.container(keyedBy: CodingKeys.self)
         name = try c.decode(String.self, forKey: .name)
         maxAction = c.value(.maxAction, ActionKind.quit)
+        suspendable = c.value(.suspendable, true)
     }
 
-    /// Réécrit en forme courte quand il n'y a pas de plafond à exprimer, pour
-    /// que la config reste lisible à la main.
+    /// Réécrit en forme courte quand il n'y a ni plafond ni interdiction de
+    /// gel à exprimer, pour que la config reste lisible à la main.
     public func encode(to encoder: Encoder) throws {
-        if maxAction == .quit {
+        if maxAction == .quit, suspendable {
             var single = encoder.singleValueContainer()
             try single.encode(name)
             return
@@ -163,6 +179,8 @@ public struct ManagedTarget: Codable, Sendable, Equatable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(name, forKey: .name)
         try c.encode(maxAction, forKey: .maxAction)
+        // N'écrire le drapeau que lorsqu'il s'écarte du défaut, pour rester terse.
+        if !suspendable { try c.encode(false, forKey: .suspendable) }
     }
 }
 

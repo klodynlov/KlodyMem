@@ -87,9 +87,18 @@ public struct Actuator {
     private func signalAll(_ sig: Int32, _ group: AppGroup, kind: ActionKind) -> ActionResult {
         var failures: [String] = []
         var touched: [pid_t] = []
-        // SIGSTOP en ordre inverse d'empreinte : on gèle les helpers avant le
-        // leader, sinon celui-ci peut relancer un enfant pendant l'opération.
-        let order = kind == .resume ? group.pids : group.pids.reversed().map { $0 }
+        // Repartir de l'arbre **vivant** plutôt que de l'instantané figé du
+        // groupe : gèle/reprend aussi les enfants nés depuis la mesure, et dans
+        // le bon ordre (feuilles d'abord au gel, racine d'abord à la reprise).
+        let live = ProcessInventory.actionOrder(
+            roots: group.pids, leader: group.leaderPID,
+            entries: ProcessInventory.snapshot(), resuming: kind == .resume
+        )
+        // Repli sur l'instantané du groupe si l'arbre vivant est vide (cible
+        // déjà partie, ou inventaire indisponible) : le comportement d'avant.
+        let order = live.isEmpty
+            ? (kind == .resume ? group.pids : group.pids.reversed().map { $0 })
+            : live
         for pid in order {
             if Darwin.kill(pid, sig) == 0 {
                 touched.append(pid)

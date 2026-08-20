@@ -11,7 +11,11 @@
     "suspendAtHigh" : true
   },
   "manageable" : [
-    "Google Chrome",
+    {
+      "maxAction" : "quit",
+      "name" : "Google Chrome",
+      "suspendable" : false
+    },
     {
       "maxAction" : "suspend",
       "name" : "acestep_service.py"
