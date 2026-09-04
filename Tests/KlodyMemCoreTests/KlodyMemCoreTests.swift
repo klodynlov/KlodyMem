@@ -395,6 +395,42 @@ final class ReclaimerTests: XCTestCase {
         )
         XCTAssertTrue(plan.steps.isEmpty)
     }
+
+    /// Régression : `reserve` doit honorer la même politique que le garde.
+    /// Une cible `suspendable:false` plafonnée à `suspend` (le serveur MLX qui
+    /// sert l'UI) ne doit être NI gelée NI quittée — sinon `reserve` rouvre le
+    /// trou que `suspendable:false` ferme dans la boucle du garde.
+    func testPlanNeverSuspendsNorQuitsNonSuspendableCappedTarget() {
+        var config = Config()
+        config.actions.quitAtCritical = true
+        config.manageable = [
+            ManagedTarget(name: "mlx_server_guarded.py", maxAction: .suspend, suspendable: false),
+        ]
+        let reclaimer = Reclaimer(config: config, dryRun: true)
+        let plan = reclaimer.plan(
+            target: 100 * GiB,
+            sample: makeSample(cached: GiB, free: GiB),
+            groups: [makeGroup(name: "mlx_server_guarded.py", bytes: 40 * GiB, pids: [40000])]
+        )
+        XCTAssertTrue(plan.steps.isEmpty, "mlx non-suspendable/plafonné suspend ne doit jamais être touché par reserve")
+    }
+
+    /// Une cible plafonnée à `suspend` mais suspendable (acestep) est gelée,
+    /// jamais quittée — la quitter rechargerait son modèle, aussi gros.
+    func testPlanSuspendsButNeverQuitsSuspendCappedTarget() {
+        var config = Config()
+        config.actions.quitAtCritical = true
+        config.manageable = [
+            ManagedTarget(name: "acestep_service.py", maxAction: .suspend),
+        ]
+        let reclaimer = Reclaimer(config: config, dryRun: true)
+        let plan = reclaimer.plan(
+            target: 500 * GiB, // inatteignable : force les deux passes
+            sample: makeSample(cached: GiB, free: GiB),
+            groups: [makeGroup(name: "acestep_service.py", bytes: 40 * GiB, pids: [40001])]
+        )
+        XCTAssertEqual(plan.steps.map(\.kind), [.suspend])
+    }
 }
 
 // MARK: - Regroupement des process

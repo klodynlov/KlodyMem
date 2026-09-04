@@ -201,13 +201,22 @@ public struct Reclaimer {
         var steps: [(AppGroup, ActionKind)] = []
 
         // Passe 1 : suspendre. Réversible, la mémoire part au compresseur/swap.
+        // On saute les cibles non-suspendables (navigateurs, serveur MLX qui
+        // sert l'UI) : les geler casse une dépendance vivante au dégel — même
+        // règle que le garde, cf. `Guardian.plannedActions`. Sans ce garde-fou,
+        // `reserve` rouvrait le trou que `suspendable:false` ferme dans la boucle.
         for group in candidates where headroom < target {
+            guard config.target(for: group)?.suspendable == true else { continue }
             steps.append((group, .suspend))
             headroom &+= group.footprintBytes / 2 // suspendre ne libère pas tout
         }
-        // Passe 2 : quitter, si suspendre n'a pas suffi.
+        // Passe 2 : quitter, si suspendre n'a pas suffi — mais seulement les
+        // cibles dont le plafond autorise `quit`. Une cible plafonnée à
+        // `suspend` (acestep, mlx) rechargerait son modèle si on la quittait,
+        // et repartirait aussi grosse : la quitter ne libère rien durablement.
         if headroom < target, config.actions.quitAtCritical {
             for group in candidates where headroom < target {
+                guard config.target(for: group)?.maxAction == .quit else { continue }
                 steps.removeAll { $0.0.key == group.key }
                 steps.append((group, .quit))
                 headroom &+= group.footprintBytes
