@@ -24,7 +24,11 @@ public final class Guardian {
     /// Clé « cible|action » : le cooldown d'un `suspend` ne doit pas bloquer
     /// l'escalade vers un `quit`, qui est une action différente et plus grave.
     private var lastActionAt: [String: Date] = [:]
-    private var suspendedKeys: Set<String> = []
+    /// Cibles gelées par ce garde. Persisté sur disque (`suspended.json`) à
+    /// chaque changement : un garde redémarré en plein gel doit savoir qui
+    /// réveiller — cf. `recoverOrphanedSuspensions`.
+    private var suspended = SuspendState()
+    private let suspendStateURL: URL
     private var lastNotifiedTier: RiskTier = .ok
     private var lastAction: String?
 
@@ -39,6 +43,10 @@ public final class Guardian {
         self.history = HistoryLog()
         self.actuator = Actuator(config: config, dryRun: dryRun)
         self.configStamp = Guardian.configModified()
+        self.suspendStateURL = SuspendState.url
+        // Un `watch` (simulation) n'a pas le droit d'agir : il ne réveille
+        // rien et ne touche pas au fichier du vrai garde.
+        if !dryRun { recoverOrphanedSuspensions() }
     }
 
     /// Relit la config quand son fichier change.
@@ -178,7 +186,7 @@ public final class Guardian {
         // proportionnée : une cible, on remesure, on continue seulement si
         // c'est encore nécessaire.
         let planned = Guardian.plannedActions(
-            tier: tier, groups: groups, config: config, suspendedKeys: suspendedKeys
+            tier: tier, groups: groups, config: config, suspendedKeys: suspended.keys
         ).sorted { $0.group.footprintBytes > $1.group.footprintBytes }
 
         for (index, step) in planned.enumerated() {
@@ -191,16 +199,26 @@ public final class Guardian {
             // Un process gelé n'exécute plus rien : il ne traitera jamais une
             // demande d'arrêt. Le réveiller d'abord, sinon `quit` reste sans
             // effet et la mémoire n'est jamais rendue.
-            if kind == .quit, group.suspended || suspendedKeys.contains(group.key) {
+            if kind == .quit, group.suspended || suspended.contains(group.key) {
                 _ = actuator.perform(.resume, on: group)
-                suspendedKeys.remove(group.key)
+                suspended.remove(group.key)
+                persistSuspended()
             }
             let result = actuator.perform(kind, on: group)
             guard result.succeeded else {
                 log("  ✗ \(kind.rawValue):\(group.name) — \(result.message)")
                 continue
             }
-            if kind == .suspend { suspendedKeys.insert(group.key) }
+            if kind == .suspend {
+                // Retenir les PID **réellement** signalés (l'arbre vivant), pas
+                // l'instantané du groupe, et leur exécutable : c'est ce qui
+                // permettra à un garde redémarré de les reconnaître.
+                suspended.insert(
+                    group, touched: result.pids,
+                    execPaths: Guardian.execPaths(for: result.pids)
+                )
+                persistSuspended()
+            }
             markActed(group.key, kind)
             performed.append("\(kind.rawValue):\(group.name)")
         }
@@ -223,19 +241,20 @@ public final class Guardian {
         // Tracer la sortie avant tout retour anticipé : sans ça l'opérateur
         // voit l'escalade dans guard.log et jamais le retour à la normale.
         log("retour au niveau sain")
-        guard config.actions.autoResume, !suspendedKeys.isEmpty else {
+        guard config.actions.autoResume, !suspended.isEmpty else {
             history.append(HistoryEntry(
                 sample: sample, assessment: assessment, topOffenders: [], action: "recovered"
             ))
             return
         }
         var resumed: [String] = []
-        for group in groups where suspendedKeys.contains(group.key) {
+        for group in groups where suspended.contains(group.key) {
             if actuator.perform(.resume, on: group).succeeded {
                 resumed.append(group.name)
             }
         }
-        suspendedKeys.removeAll()
+        suspended.removeAll()
+        persistSuspended()
         lastAction = resumed.isEmpty ? nil : "resume:" + resumed.joined(separator: ",")
         if !resumed.isEmpty { log("  → reprise de " + resumed.joined(separator: ", ")) }
         history.append(HistoryEntry(
@@ -248,6 +267,97 @@ public final class Guardian {
                 body: "Reprise de " + resumed.joined(separator: ", ")
             )
         }
+    }
+
+    // MARK: - Gels hérités d'un garde précédent
+
+    /// Au démarrage : relire les gels persistés et réveiller ce qui est encore
+    /// réellement arrêté.
+    ///
+    /// Ce qui est réveillé est journalisé comme un `resume:` ordinaire dans
+    /// `history.jsonl` — même format que `deescalate`, pour que les lecteurs
+    /// de l'historique (dont `nightly_eval.py`) voient l'épisode se clore.
+    /// Une reprise qui échoue reste dans le fichier : elle sera retentée au
+    /// prochain démarrage plutôt qu'oubliée.
+    private func recoverOrphanedSuspensions() {
+        let saved = SuspendState.read(from: suspendStateURL)
+        guard !saved.isEmpty else { return }
+
+        let orphans = Guardian.orphanedSuspensions(saved, live: ProcessInventory.snapshot())
+        let stale = saved.entries.count - orphans.count
+        log("gel hérité d'un garde précédent — \(saved.entries.count) cible(s)"
+            + (stale > 0 ? ", \(stale) périmée(s) ignorée(s)" : ""))
+
+        let outcome = Guardian.resumeOrphans(orphans, actuator: actuator)
+        for line in outcome.messages { log("  " + line) }
+        suspended = SuspendState(entries: outcome.remaining)
+        persistSuspended()
+
+        guard !outcome.resumed.isEmpty else { return }
+        let sample = sampler.sample()
+        let assessment = RiskModel.assess(sample, thresholds: config.thresholds)
+        lastAction = "resume:" + outcome.resumed.joined(separator: ",")
+        history.append(HistoryEntry(
+            sample: sample, assessment: assessment, topOffenders: [], action: lastAction
+        ))
+        notifier.post(
+            title: "Mémoire : gel hérité réparé",
+            body: "Reprise de " + outcome.resumed.joined(separator: ", ")
+        )
+    }
+
+    /// Parmi les gels persistés, ceux qu'il faut encore réveiller : au moins
+    /// un membre vivant, en STOP, et exécutant toujours le même binaire.
+    /// Pure, pour être testable — c'est elle qui décide à qui on envoie
+    /// SIGCONT sur la foi d'un fichier.
+    ///
+    /// Un PID réattribué à un autre exécutable n'est pas « le nôtre » : un
+    /// `Ctrl-Z` dans un terminal ne doit pas être défait par le garde. Un
+    /// membre dont le chemin n'avait pas pu être lu au gel (`""`) est admis.
+    static func orphanedSuspensions(
+        _ state: SuspendState, live: [ProcessEntry]
+    ) -> [SuspendState.Entry] {
+        let byPID = Dictionary(live.map { ($0.pid, $0) }, uniquingKeysWith: { a, _ in a })
+        return state.entries.filter { entry in
+            entry.members.contains { member in
+                guard let proc = byPID[member.pid], proc.suspended else { return false }
+                return member.execPath.isEmpty || proc.execPath.isEmpty
+                    || member.execPath == proc.execPath
+            }
+        }
+    }
+
+    /// Envoie SIGCONT à chaque gel hérité, et sépare ce qui a repris de ce qui
+    /// doit être retenté. Sans effet sur l'état du garde : le journal et le
+    /// fichier sont la responsabilité de l'appelant.
+    static func resumeOrphans(
+        _ orphans: [SuspendState.Entry], actuator: Actuator
+    ) -> (resumed: [String], remaining: [SuspendState.Entry], messages: [String]) {
+        var resumed: [String] = []
+        var remaining: [SuspendState.Entry] = []
+        var messages: [String] = []
+        for entry in orphans {
+            let result = actuator.perform(.resume, on: entry.group)
+            if result.succeeded {
+                resumed.append(entry.name)
+                messages.append("→ resume:\(entry.name) (\(result.message))")
+            } else {
+                remaining.append(entry)
+                messages.append("✗ resume:\(entry.name) — \(result.message)")
+            }
+        }
+        return (resumed, remaining, messages)
+    }
+
+    private func persistSuspended() {
+        guard !dryRun else { return }
+        suspended.write(to: suspendStateURL)
+    }
+
+    private static func execPaths(for pids: [pid_t]) -> [pid_t: String] {
+        var out: [pid_t: String] = [:]
+        for pid in pids { out[pid] = ProcessInventory.execPath(pid) ?? "" }
+        return out
     }
 
     /// Trace horodatée sur stdout — c'est ce que launchd capte dans

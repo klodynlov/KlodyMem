@@ -1091,3 +1091,235 @@ final class ActionOrderTests: XCTestCase {
         )
     }
 }
+
+// MARK: - Gels persistés
+
+/// L'ensemble des cibles gelées ne doit pas mourir avec le daemon : sept
+/// épisodes `suspend:` sans `resume:` dans l'historique venaient de là.
+final class SuspendStateTests: XCTestCase {
+    private func scratch() -> URL {
+        URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("klodymem-suspend-\(getpid())-\(UUID().uuidString).json")
+    }
+
+    private func mlx(pids: [pid_t] = [51000, 51001]) -> AppGroup {
+        makeGroup(name: "mlx_server_guarded.py", bytes: 30 * GiB, pids: pids)
+    }
+
+    func testWriteThenReadRoundTrips() {
+        let url = scratch()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        var state = SuspendState()
+        state.insert(mlx(), touched: [51000, 51001, 51002],
+                     execPaths: [51000: "/usr/bin/python3", 51001: "/usr/bin/python3"])
+        state.write(to: url)
+
+        let back = SuspendState.read(from: url)
+        XCTAssertEqual(back.entries.count, 1)
+        XCTAssertEqual(back.keys, ["mlx_server_guarded.py"])
+        XCTAssertEqual(back.entries[0].leaderPID, 51000)
+        XCTAssertEqual(back.entries[0].members.map(\.pid), [51000, 51001, 51002])
+        XCTAssertEqual(back.entries[0].members[2].execPath, "",
+                       "un chemin inconnu au gel est stocké vide, pas inventé")
+        // Les dates ISO-8601 perdent les sous-secondes : tolérance d'une seconde.
+        XCTAssertEqual(back.entries[0].since.timeIntervalSince1970,
+                       state.entries[0].since.timeIntervalSince1970, accuracy: 1.0)
+    }
+
+    /// Les PID retenus sont ceux **réellement** signalés — l'arbre vivant —
+    /// pas l'instantané figé du groupe.
+    func testInsertKeepsTouchedPIDsOverTheSnapshot() {
+        var state = SuspendState()
+        state.insert(mlx(pids: [51000]), touched: [51000, 51005], execPaths: [:])
+        XCTAssertEqual(state.entries[0].members.map(\.pid), [51000, 51005])
+    }
+
+    func testInsertFallsBackToSnapshotWhenNothingWasTouched() {
+        var state = SuspendState()
+        state.insert(mlx(pids: [51000, 51001]), touched: [], execPaths: [:])
+        XCTAssertEqual(state.entries[0].members.map(\.pid), [51000, 51001])
+    }
+
+    func testInsertReplacesAnExistingKey() {
+        var state = SuspendState()
+        state.insert(mlx(), touched: [51000], execPaths: [:])
+        state.insert(mlx(), touched: [51000, 51001], execPaths: [:])
+        XCTAssertEqual(state.entries.count, 1)
+        XCTAssertEqual(state.entries[0].members.count, 2)
+    }
+
+    /// Fichier absent ⇔ rien de gelé : écrire un état vide supprime le fichier
+    /// plutôt que de laisser un `[]` qu'il faudrait interpréter.
+    func testEmptyStateRemovesTheFile() {
+        let url = scratch()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        var state = SuspendState()
+        state.insert(mlx(), touched: [51000], execPaths: [:])
+        state.write(to: url)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+
+        state.removeAll()
+        state.write(to: url)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+        XCTAssertTrue(SuspendState.read(from: url).isEmpty)
+    }
+
+    func testRemoveByKey() {
+        var state = SuspendState()
+        state.insert(mlx(), touched: [51000], execPaths: [:])
+        state.insert(makeGroup(name: "acestep_service.py", pids: [52000]),
+                     touched: [52000], execPaths: [:])
+        state.remove("mlx_server_guarded.py")
+        XCTAssertEqual(state.keys, ["acestep_service.py"])
+        XCTAssertFalse(state.contains("mlx_server_guarded.py"))
+    }
+
+    /// Un JSON à moitié écrit ne doit jamais déclencher un SIGCONT.
+    func testCorruptFileReadsAsEmpty() throws {
+        let url = scratch()
+        defer { try? FileManager.default.removeItem(at: url) }
+        try Data("{\"entries\": [{\"key\": ".utf8).write(to: url)
+        XCTAssertTrue(SuspendState.read(from: url).isEmpty)
+    }
+
+    func testMissingFileReadsAsEmpty() {
+        let missing = URL(fileURLWithPath: "/nonexistent/klodymem/suspended.json")
+        XCTAssertTrue(SuspendState.read(from: missing).isEmpty)
+    }
+
+    func testEntryRebuildsASignalableGroup() {
+        var state = SuspendState()
+        state.insert(mlx(pids: [51000, 51001]), touched: [51000, 51001, 51002], execPaths: [:])
+        let group = state.entries[0].group
+        XCTAssertEqual(group.key, "mlx_server_guarded.py")
+        XCTAssertEqual(group.leaderPID, 51000)
+        XCTAssertEqual(group.pids, [51000, 51001, 51002])
+        XCTAssertTrue(group.suspended)
+    }
+}
+
+// MARK: - Réveil des gels hérités
+
+/// Au démarrage, le garde relit `suspended.json` et réveille ce qui est encore
+/// réellement en STOP — et seulement ça.
+final class OrphanRecoveryTests: XCTestCase {
+    private func live(_ pid: pid_t, exec: String, stopped: Bool) -> ProcessEntry {
+        ProcessEntry(pid: pid, ppid: 1, uid: getuid(), name: "p\(pid)", execPath: exec,
+                     footprintBytes: 0, residentBytes: 0, suspended: stopped, label: "p\(pid)")
+    }
+
+    private func entry(_ pids: [pid_t], exec: String) -> SuspendState.Entry {
+        SuspendState.Entry(
+            key: "mlx", name: "mlx_server_guarded.py", bundlePath: nil, leaderPID: pids[0],
+            members: pids.map { SuspendState.Member(pid: $0, execPath: exec) }, since: Date()
+        )
+    }
+
+    func testStoppedMemberRunningTheSameBinaryIsAnOrphan() {
+        let state = SuspendState(entries: [entry([100, 101], exec: "/py")])
+        let found = Guardian.orphanedSuspensions(
+            state, live: [live(100, exec: "/py", stopped: true)]
+        )
+        XCTAssertEqual(found.map(\.key), ["mlx"])
+    }
+
+    /// Déjà repris (à la main, ou par un autre garde) : rien à faire.
+    func testRunningMemberIsNotAnOrphan() {
+        let state = SuspendState(entries: [entry([100], exec: "/py")])
+        XCTAssertTrue(Guardian.orphanedSuspensions(
+            state, live: [live(100, exec: "/py", stopped: false)]
+        ).isEmpty)
+    }
+
+    /// Process disparu : entrée périmée, on n'envoie rien.
+    func testDeadMemberIsNotAnOrphan() {
+        let state = SuspendState(entries: [entry([100], exec: "/py")])
+        XCTAssertTrue(Guardian.orphanedSuspensions(state, live: []).isEmpty)
+    }
+
+    /// PID réattribué à un autre binaire, lui-même arrêté (`Ctrl-Z` dans un
+    /// terminal) : ce n'est pas notre gel, on ne le défait pas.
+    func testReusedPIDWithAnotherBinaryIsNotAnOrphan() {
+        let state = SuspendState(entries: [entry([100], exec: "/py")])
+        XCTAssertTrue(Guardian.orphanedSuspensions(
+            state, live: [live(100, exec: "/bin/vim", stopped: true)]
+        ).isEmpty)
+    }
+
+    /// Chemin illisible au gel : on ne peut pas prouver la réattribution, on
+    /// admet le membre — mieux vaut un SIGCONT de trop qu'un process gelé à vie.
+    func testUnknownBinaryAtFreezeTimeIsAdmitted() {
+        let state = SuspendState(entries: [entry([100], exec: "")])
+        XCTAssertEqual(Guardian.orphanedSuspensions(
+            state, live: [live(100, exec: "/py", stopped: true)]
+        ).count, 1)
+    }
+
+    func testOneStoppedMemberIsEnough() {
+        let state = SuspendState(entries: [entry([100, 101, 102], exec: "/py")])
+        let found = Guardian.orphanedSuspensions(state, live: [
+            live(100, exec: "/py", stopped: false),
+            live(102, exec: "/py", stopped: true),
+        ])
+        XCTAssertEqual(found.count, 1)
+    }
+
+    /// Le cycle complet sur un vrai process : gelé par SIGSTOP, retrouvé via
+    /// l'état persisté, réveillé par `resumeOrphans`, constaté vivant.
+    func testRealStoppedProcessIsResumed() throws {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        task.arguments = ["30"]
+        try task.run()
+        let pid = task.processIdentifier
+        defer { kill(pid, SIGKILL); task.waitUntilExit() }
+
+        XCTAssertEqual(kill(pid, SIGSTOP), 0)
+        XCTAssertTrue(waitForStopState(pid, stopped: true), "le cobaye doit passer en STOP")
+
+        var state = SuspendState()
+        state.insert(makeGroup(name: "sleep", pids: [pid]), touched: [pid],
+                     execPaths: [pid: ProcessInventory.execPath(pid) ?? ""])
+        let url = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("klodymem-orphan-\(getpid()).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        state.write(to: url)
+
+        let saved = SuspendState.read(from: url)
+        let orphans = Guardian.orphanedSuspensions(saved, live: ProcessInventory.snapshot())
+        XCTAssertEqual(orphans.map(\.key), ["sleep"])
+
+        let outcome = Guardian.resumeOrphans(
+            orphans, actuator: Actuator(config: Config(), dryRun: false)
+        )
+        XCTAssertEqual(outcome.resumed, ["sleep"])
+        XCTAssertTrue(outcome.remaining.isEmpty)
+        XCTAssertTrue(waitForStopState(pid, stopped: false), "le cobaye doit avoir reçu SIGCONT")
+    }
+
+    /// Une reprise qui ne touche personne (cible partie entre-temps) n'est pas
+    /// comptée comme réussie : l'entrée reste à retenter, et le journal ne
+    /// prétend pas avoir réveillé quelqu'un.
+    func testResumeOfAVanishedTargetIsNotClaimed() {
+        let ghost = entry([pid_t(999_999)], exec: "/py")
+        let outcome = Guardian.resumeOrphans(
+            [ghost], actuator: Actuator(config: Config(), dryRun: false)
+        )
+        XCTAssertTrue(outcome.resumed.isEmpty)
+        XCTAssertEqual(outcome.remaining.map(\.key), ["mlx"])
+    }
+
+    private func waitForStopState(_ pid: pid_t, stopped: Bool, timeout: TimeInterval = 3) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if let entry = ProcessInventory.snapshot().first(where: { $0.pid == pid }),
+               entry.suspended == stopped {
+                return true
+            }
+            usleep(50_000)
+        }
+        return false
+    }
+}

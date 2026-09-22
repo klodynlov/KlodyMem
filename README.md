@@ -296,4 +296,7 @@ Tests/                    43 tests, dont les sondes réelles et les régressions
 deploy/                   agent launchd, install/uninstall, bundle .app
 ```
 
-État : `~/.local/state/klodymem/` — `state.json`, `history.jsonl`, `guard.log`.
+État : `~/.local/state/klodymem/` — `state.json`, `history.jsonl`, `guard.log`,
+`suspended.json` (cibles gelées, présent seulement pendant un gel : un garde
+redémarré le relit et renvoie SIGCONT à ce qui est encore en STOP, journalisé
+comme un `resume:` ordinaire).
