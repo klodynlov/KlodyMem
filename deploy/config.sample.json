@@ -26,7 +26,8 @@
     },
     "indexer_worker.py",
     "acestep_cli_v15.py",
-    "acestep_cli.py"
+    "acestep_cli.py",
+    "_acestep_essence_worker.py"
   ],
   "pollSeconds" : 5,
   "protected" : [
