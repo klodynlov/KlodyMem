@@ -105,9 +105,27 @@ public final class Guardian {
 
     public func run() -> Never {
         let interval = max(1.0, config.pollSeconds)
-        while true {
-            tick()
-            Thread.sleep(forTimeInterval: interval)
+        Guardian.boucle(tours: nil, intervalle: interval) { self.tick() }
+        fatalError("la boucle de garde ne rend jamais la main")
+    }
+
+    /// Boucle de sondage : `corps`, puis `intervalle` secondes, `tours` fois
+    /// (`nil` = sans fin).
+    ///
+    /// Chaque tour est drainé par un `autoreleasepool`. Un CLI n'a pas de run
+    /// loop : sans ce pool, les objets Foundation autoreleased d'un tour — un
+    /// `NSString` ponté par process inventorié, l'encodage JSON de l'état
+    /// partagé — ne sont JAMAIS libérés. Vécu le 2026-11-23 : le garde pesait
+    /// 11,9 Gio après 15 jours (192 millions d'allocations de ~61 octets, tout
+    /// en compresseur), soit le 4ᵉ consommateur de RAM de la machine qu'il
+    /// surveille. Reproduit hors production : 50 145 octets perdus par tour
+    /// sans pool, ~480 avec.
+    static func boucle(tours: Int?, intervalle: TimeInterval, _ corps: () -> Void) {
+        var fait = 0
+        while tours.map({ fait < $0 }) ?? true {
+            autoreleasepool { corps() }
+            fait += 1
+            if intervalle > 0 { Thread.sleep(forTimeInterval: intervalle) }
         }
     }
 
